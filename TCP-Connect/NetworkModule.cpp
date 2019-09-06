@@ -39,7 +39,7 @@ bool Network::SetupHost(unsigned short port)
 		printf("Error starting WSA\n");
 		return false;
 	}
-	m_soc = socket(AF_INET, SOCK_STREAM, 0); //IPPROTO_TCP
+	m_soc = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); //IPPROTO_TCP
 	if (m_soc == INVALID_SOCKET) {
 		printf("Error creating socket\n");
 	}
@@ -52,7 +52,10 @@ bool Network::SetupHost(unsigned short port)
 		return false;
 	}
 
-	//Prepare the socket to listen
+	BOOL bOptVal = TRUE;
+	int bOptLen = sizeof(bool);
+	setsockopt(m_soc, IPPROTO_TCP, TCP_NODELAY, (char*)& bOptVal, bOptLen);//Prepare the socket to listen
+	
 	listen(m_soc, SOMAXCONN);
 
 	m_isInitialized = true;
@@ -97,6 +100,12 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport)
 		return false;
 	}
 
+	BOOL bOptVal = TRUE;
+	int bOptLen = sizeof(bool);
+
+	setsockopt(m_soc, IPPROTO_TCP, TCP_NODELAY, (char*)& bOptVal, bOptLen);//Prepare the socket to listen
+
+
 	Connection conn;
 	conn.isConnected = true;
 	conn.socket = m_soc;
@@ -114,18 +123,20 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport)
 
 bool Network::Send(const char* message, size_t size, int receiverID)
 {
-	printf(std::string(std::to_string(receiverID) + "\n").c_str());
-
 	if (receiverID == -1 && m_isServer) {
 		int n = 0;
 		{
 			std::lock_guard<std::mutex> mu(m_mutex_connections);
 			n = m_connections.size();
 		}
+		int success = 0;
 		for (int i = 0; i < n; i++)
 		{
-			Send(message, size, i);
+			if (Send(message, size, i))
+				success++;
 		}
+		printf((std::string("Broadcasting to ") + std::to_string(success) + "/" + std::to_string(n) + " Clients: " + std::string(message) + "\n").c_str());
+
 		return true;
 	}	
 
@@ -210,6 +221,7 @@ void Network::Listen(const Connection conn)
 	while (!connectionIsClosed) {
 		ZeroMemory(msg, sizeof(msg));
 		int bytesReceived = recv(conn.socket, msg, MAX_PACKAGE_SIZE, 0);
+		printf((std::string("bytesReceived: ") + std::to_string(bytesReceived) + "\n").c_str());
 
 		switch (bytesReceived)
 		{

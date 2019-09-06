@@ -23,10 +23,10 @@ int main() {
 		return 0;
 	}
 
-	for (size_t i = 0; i < 10; i++)
+	for (size_t i = 0; i < 100; i++)
 	{
 		std::string s = "Hello Server for the #" + std::to_string(i+1) + " time!";
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		//std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		if (!n.Send(s.c_str(), s.length() + 1)) {
 			printf(std::string("Failed to send message: " + s + "\n").c_str());
 		}

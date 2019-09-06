@@ -7,7 +7,7 @@
 #include <thread>
 #include <mutex>
 
-#define MAX_PACKAGE_SIZE 1024
+#define MAX_PACKAGE_SIZE 64
 #define MAX_AWAITING_PACKAGES 1000
 
 

@@ -1,5 +1,7 @@
 #include "NetworkModule.hpp"
-
+//
+//static BOOL bOptVal = TRUE;
+//static int bOptLen = sizeof(bool);
 
 Network::Network() {}
 
@@ -54,7 +56,12 @@ bool Network::SetupHost(unsigned short port)
 
 	BOOL bOptVal = TRUE;
 	int bOptLen = sizeof(bool);
-	setsockopt(m_soc, IPPROTO_TCP, TCP_NODELAY, (char*)& bOptVal, bOptLen);//Prepare the socket to listen
+
+	int iOptVal = 0;
+	int iOptLen = sizeof(int);
+
+	setsockopt(m_soc, IPPROTO_TCP, TCP_NODELAY, (char*)&bOptVal, bOptLen);//Prepare the socket to listen
+	setsockopt(m_soc, IPPROTO_TCP, SO_SNDBUF, (char*)&iOptVal, iOptLen);//Prepare the socket to listen
 	
 	listen(m_soc, SOMAXCONN);
 
@@ -103,8 +110,12 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport)
 	BOOL bOptVal = TRUE;
 	int bOptLen = sizeof(bool);
 
-	setsockopt(m_soc, IPPROTO_TCP, TCP_NODELAY, (char*)& bOptVal, bOptLen);//Prepare the socket to listen
+	int iOptVal = 0;
+	int iOptLen = sizeof(int);
 
+	setsockopt(m_soc, IPPROTO_TCP, TCP_NODELAY, (char*)& bOptVal, bOptLen);//Prepare the socket to listen
+	setsockopt(m_soc, IPPROTO_TCP, SO_SNDBUF, (char*)& iOptVal, iOptLen);//Prepare the socket to listen
+	
 
 	Connection conn;
 	conn.isConnected = true;
@@ -135,10 +146,13 @@ bool Network::Send(const char* message, size_t size, int receiverID)
 			if (Send(message, size, i))
 				success++;
 		}
-		printf((std::string("Broadcasting to ") + std::to_string(success) + "/" + std::to_string(n) + " Clients: " + std::string(message) + "\n").c_str());
+		//printf((std::string("Broadcasting to ") + std::to_string(success) + "/" + std::to_string(n) + " Clients: " + std::string(message) + "\n").c_str());
 
 		return true;
 	}	
+
+	char msg[MAX_PACKAGE_SIZE] = {0};
+	memcpy(msg, message, size);
 
 	Connection conn;
 	{
@@ -152,7 +166,7 @@ bool Network::Send(const char* message, size_t size, int receiverID)
 	if (!conn.isConnected)
 		return false;
 
-	if (send(conn.socket, message, size, 0) == SOCKET_ERROR)
+	if (send(conn.socket, msg, MAX_PACKAGE_SIZE, 0) == SOCKET_ERROR)
 		return false;
 
 	return true;
@@ -183,14 +197,7 @@ void Network::WaitForNewConnections()
 		}
 
 		char host[NI_MAXHOST] = { 0 }; // Client's remote name
-		//char service[NI_MAXSERV] = { 0 }; // Service (i.e port) the client is connect on
-		//if (getnameinfo((sockaddr*)&client, sizeof(client), host, NI_MAXHOST, service, NI_MAXSERV, 0) == 0) {
-		//	std::cout << host << "Host connected on port " << service << std::endl;
-		//}
-		//else {
-		//	inet_ntop(AF_INET, &client.sin_addr, host, NI_MAXHOST);
-		//	std::cout << host << "Host connected on port " << ntohs(client.sin_port) << std::endl;
-		//}
+ 
 
 		inet_ntop(AF_INET, &client.sin_addr, host, NI_MAXHOST);
 		std::string s = host;
@@ -222,7 +229,7 @@ void Network::Listen(const Connection conn)
 		ZeroMemory(msg, sizeof(msg));
 		int bytesReceived = recv(conn.socket, msg, MAX_PACKAGE_SIZE, 0);
 		printf((std::string("bytesReceived: ") + std::to_string(bytesReceived) + "\n").c_str());
-
+		
 		switch (bytesReceived)
 		{
 		case 0:

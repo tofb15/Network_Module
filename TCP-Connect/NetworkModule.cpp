@@ -5,28 +5,50 @@ Network::Network() {}
 
 Network::~Network() {}
 
+void Network::CheckForPackages(void(*m_callbackfunction)(Package))
+{
+
+	bool morePackages = true;
+	while (morePackages)
+	{
+		std::lock_guard<std::mutex> lock(m_mutex_packages);
+
+		if (m_pstart == m_pend) {
+			morePackages = false;
+			break;
+		}
+
+		m_callbackfunction(m_awaitingPackages[m_pstart]);
+
+		m_pstart = (m_pstart + 1) % MAX_AWAITING_PACKAGES;
+	}
+
+}
+
 bool Network::SetupHost(unsigned short port)
 {
 	if (m_isInitialized)
 		return false;
 
+	m_awaitingPackages = new Package [MAX_AWAITING_PACKAGES];
+
 	WSADATA data;
 	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
 	int status = WSAStartup(version, &data);
 	if (status != 0) {
-		std::cout << "Error starting WSA\n";
+		printf("Error starting WSA\n");
 		return false;
 	}
 	m_soc = socket(AF_INET, SOCK_STREAM, 0); //IPPROTO_TCP
 	if (m_soc == INVALID_SOCKET) {
-		std::cout << "Error creating socket\n";
+		printf("Error creating socket\n");
 	}
 	m_myAddr.sin_addr.S_un.S_addr = ADDR_ANY;
 	m_myAddr.sin_family = AF_INET;
 	m_myAddr.sin_port = htons(port);
 
 	if (bind(m_soc, (sockaddr*)& m_myAddr, sizeof(m_myAddr)) == SOCKET_ERROR) {
-		std::cout << "Error binding socket\n";
+		printf("Error binding socket\n");
 		return false;
 	}
 
@@ -47,17 +69,20 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport)
 	if (m_isInitialized)
 		return false;
 
+	m_awaitingPackages = new Package[MAX_AWAITING_PACKAGES];
+
 	WSADATA data;
 	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
 	int status = WSAStartup(version, &data);
 	if (status != 0) {
-		std::cout << "Error starting WSA\n";
+		printf("Error starting WSA\n");
 		return false;
 	}
 
 	m_soc = socket(AF_INET, SOCK_STREAM, 0); //IPPROTO_TCP
 	if (m_soc == INVALID_SOCKET) {
-		std::cout << "Error creating socket\n";
+		printf("Error creating socket\n");
+		return false;
 	}
 
 	//m_myAddr.sin_addr.S_un.S_addr = ADDR_ANY;
@@ -65,27 +90,12 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport)
 	m_myAddr.sin_port = htons(hostport);
 	inet_pton(AF_INET, IP_adress, &m_myAddr.sin_addr);
 
-	//if (bind(m_soc, (sockaddr*)& m_myAddr, sizeof(m_myAddr)) == SOCKET_ERROR) {
-	//	std::cout << "Error binding socket\n";
-	//	return false;
-	//}
-
-	//char msg[1024] = "Hello Server!";
-
 	//connect needs error checking!
 	int conres = connect(m_soc, (sockaddr*)&m_myAddr, sizeof(m_myAddr));
-
-	//int res = send(m_soc, msg, sizeof(msg), 0);
-	//if (res == SOCKET_ERROR) {
-	//	res = WSAGetLastError();
-	//}
-
-	//std::cout << "Result was: " << res << std::endl;
-
-	//ZeroMemory(msg, 1024);
-	//int bytesRes = recv(m_soc, msg, 1024, 0);
-
-	//std::cout << "Message from server: " << msg << std::endl;
+	if (conres == SOCKET_ERROR) {
+		printf("Error connecting to host\n");
+		return false;
+	}
 
 	Connection conn;
 	conn.isConnected = true;
@@ -104,6 +114,21 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport)
 
 bool Network::Send(const char* message, size_t size, int receiverID)
 {
+	printf(std::string(std::to_string(receiverID) + "\n").c_str());
+
+	if (receiverID == -1 && m_isServer) {
+		int n = 0;
+		{
+			std::lock_guard<std::mutex> mu(m_mutex_connections);
+			n = m_connections.size();
+		}
+		for (int i = 0; i < n; i++)
+		{
+			Send(message, size, i);
+		}
+		return true;
+	}	
+
 	Connection conn;
 	{
 		std::lock_guard<std::mutex> mu(m_mutex_connections);
@@ -157,7 +182,9 @@ void Network::WaitForNewConnections()
 		//}
 
 		inet_ntop(AF_INET, &client.sin_addr, host, NI_MAXHOST);
-		std::cout << host << "Host connected on port " << ntohs(client.sin_port) << std::endl;
+		std::string s = host;
+		s += " connected on port " + std::to_string(ntohs(client.sin_port)) + "\n";
+		printf(s.c_str());
 
 		Connection conn;
 		conn.isConnected = true;
@@ -178,25 +205,31 @@ void Network::WaitForNewConnections()
 void Network::Listen(const Connection conn)
 {
 	bool connectionIsClosed = false;
-	char msg[4096];
+	char msg[MAX_PACKAGE_SIZE];
 
 	while (!connectionIsClosed) {
 		ZeroMemory(msg, sizeof(msg));
-		int bytesReceived = recv(conn.socket, msg, sizeof(msg), 0);
+		int bytesReceived = recv(conn.socket, msg, MAX_PACKAGE_SIZE, 0);
 
 		switch (bytesReceived)
 		{
 		case 0:
-			std::cout << "Client Disconnected" << std::endl;
+			printf("Client Disconnected\n");
 			connectionIsClosed = true;
 			break;
 		case SOCKET_ERROR:
-			std::cout << "Error Receiving" << std::endl;
+			printf("Error Receiving: Disconnecting client.\n");
 			connectionIsClosed = true;
 			break;
 		default:
-			std::cout << "Received: " << msg << std::endl;
-			//Send(msg, (size_t)(bytesReceived) + 1, conn);
+		{
+			std::lock_guard<std::mutex> lock(m_mutex_packages);
+			m_awaitingPackages[m_pend].senderId = conn.id;
+			memcpy(m_awaitingPackages[m_pend].msg, msg, bytesReceived);
+			m_pend = (m_pend + 1) % MAX_AWAITING_PACKAGES;
+			if (m_pend == m_pstart)
+				m_pstart++;
+		}
 			break;
 		}
 	}

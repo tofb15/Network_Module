@@ -2,16 +2,21 @@
 #include <WS2tcpip.h>
 #pragma comment (lib, "ws2_32.lib")
 #include <vector>
-#include <iostream>
+#include <string>
+//#include <iostream>
 #include <thread>
 #include <mutex>
 
+#define MAX_PACKAGE_SIZE 1024
+#define MAX_AWAITING_PACKAGES 1000
+
+
 struct Connection
 {
+	std::string ip, port;
 	int id;
 	bool isConnected;
 	SOCKET socket;
-	std::string ip, port;
 	std::thread* thread;//The thread used to listen for messages
 	Connection() {
 		id = -2;
@@ -22,11 +27,23 @@ struct Connection
 	}
 };
 
+struct Package {
+	int senderId;
+	char msg[MAX_PACKAGE_SIZE];
+};
+
+/*
+	This function needs to be implemented by the application and passed to SetupHost or SetupClient.
+*/
+//void CALLBACK ProcessPackage(Package p);
+
 class Network
 {
 public:
 	Network();
 	~Network();
+
+	void CheckForPackages(void (*m_callbackfunction)(Package));
 
 	/*
 		Call SetupHost() to initialize a host socket. Dont call this and SetupHost() in the same application.
@@ -45,8 +62,10 @@ public:
 	*/
 	bool Send(const char* message, size_t size, int receiverID = 0);
 	bool Send(const char* message, size_t size, Connection conn);
-
+	
 private:
+	void (*m_callbackfunction)(Package); //Function pointer to the ProcessPackages function
+
 	SOCKET m_soc = 0;
 	sockaddr_in m_myAddr = {};
 	std::thread* m_clientAcceptThread = nullptr;
@@ -56,6 +75,12 @@ private:
 	/*Do not access m_connections without mutex lock*/
 	std::vector<Connection> m_connections;
 	std::mutex m_mutex_connections;
+
+	Package* m_awaitingPackages;
+	int m_pstart = 0, m_pend = 0;
+	std::mutex m_mutex_packages;
+	//std::mutex m_mutex_pend;
+
 
 	/*
 		Only used by the server. This function is called in a new thread and waits for new incomming connection requests.

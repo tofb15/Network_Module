@@ -1,78 +1,9 @@
-#include <WS2tcpip.h>
-#pragma comment (lib, "ws2_32.lib")
-#include <vector>
-#include <iostream>
-#include <thread>
-#include <mutex>
+#include "NetworkModule.hpp"
 
-struct Connection
-{
-	int id;
-	bool isConnected;
-	SOCKET socket;
-	std::string ip, port;
-	std::thread* thread;//The thread used to listen for messages
-};
 
-class Network
-{
-public:
-	Network();
-	~Network();
+Network::Network() {}
 
-	/*
-		Call SetupHost() to initialize a host socket. Dont call this and SetupHost() in the same application.
-	*/
-	bool SetupHost(unsigned short port);
-	/*
-		Call SetupClient() to initialize a client socket. Dont call this and SetupHost() in the same application.
-	*/
-	bool SetupClient(const char* host_ip, unsigned short hostport);
-	/*
-		Send a message to connection "receiverID".
-		If SetupClient has been called, any number passed to receiverID will all send to the connected host.
-		If SetupHost has been called, passing -1 to receiverID will send the message to all connected clients.
-
-		Return true if message could be sent to all receivers.
-	*/
-	bool Send(const char* message, size_t size, int receiverID = 0);
-	bool Send(const char * message, size_t size, Connection conn);
-
-private:
-	SOCKET m_soc;
-	sockaddr_in m_myAddr;
-	std::thread* m_clientAcceptThread;
-
-	bool m_isServer;
-	bool m_isInitialized;
-	/*Do not access m_connections without mutex lock*/
-	std::vector<Connection> m_connections;
-	std::mutex m_mutex_connections;
-
-	void WaitForNewConnections();
-	void Listen(const Connection conn);//Rename this function
-};
-
-int main() {
-
-	Network n;
-	n.SetupHost(54000);
-
-	//Keep main from closing
-	while (true) {};
-
-	return 0;
-}
-
-Network::Network()
-{
-
-}
-
-Network::~Network()
-{
-
-}
+Network::~Network() {}
 
 bool Network::SetupHost(unsigned short port)
 {
@@ -83,7 +14,7 @@ bool Network::SetupHost(unsigned short port)
 	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
 	int status = WSAStartup(version, &data);
 	if (status != 0) {
-		std::cout << "Error starting Server\n";
+		std::cout << "Error starting WSA\n";
 		return false;
 	}
 	m_soc = socket(AF_INET, SOCK_STREAM, 0); //IPPROTO_TCP
@@ -94,7 +25,7 @@ bool Network::SetupHost(unsigned short port)
 	m_myAddr.sin_family = AF_INET;
 	m_myAddr.sin_port = htons(port);
 
-	if (bind(m_soc, (sockaddr*)&m_myAddr, sizeof(m_myAddr)) == SOCKET_ERROR) {
+	if (bind(m_soc, (sockaddr*)& m_myAddr, sizeof(m_myAddr)) == SOCKET_ERROR) {
 		std::cout << "Error binding socket\n";
 		return false;
 	}
@@ -107,14 +38,63 @@ bool Network::SetupHost(unsigned short port)
 
 	//Start a new thread that will wait for new connections
 	m_clientAcceptThread = new std::thread(&Network::WaitForNewConnections, this);
-	
+
 	return true;
 }
 
-bool Network::SetupClient(const char * IP_adress, unsigned short hostport)
+bool Network::SetupClient(const char* IP_adress, unsigned short hostport)
 {
 	if (m_isInitialized)
 		return false;
+
+	WSADATA data;
+	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
+	int status = WSAStartup(version, &data);
+	if (status != 0) {
+		std::cout << "Error starting WSA\n";
+		return false;
+	}
+
+	m_soc = socket(AF_INET, SOCK_STREAM, 0); //IPPROTO_TCP
+	if (m_soc == INVALID_SOCKET) {
+		std::cout << "Error creating socket\n";
+	}
+
+	//m_myAddr.sin_addr.S_un.S_addr = ADDR_ANY;
+	m_myAddr.sin_family = AF_INET;
+	m_myAddr.sin_port = htons(hostport);
+	inet_pton(AF_INET, IP_adress, &m_myAddr.sin_addr);
+
+	//if (bind(m_soc, (sockaddr*)& m_myAddr, sizeof(m_myAddr)) == SOCKET_ERROR) {
+	//	std::cout << "Error binding socket\n";
+	//	return false;
+	//}
+
+	//char msg[1024] = "Hello Server!";
+
+	//connect needs error checking!
+	int conres = connect(m_soc, (sockaddr*)&m_myAddr, sizeof(m_myAddr));
+
+	//int res = send(m_soc, msg, sizeof(msg), 0);
+	//if (res == SOCKET_ERROR) {
+	//	res = WSAGetLastError();
+	//}
+
+	//std::cout << "Result was: " << res << std::endl;
+
+	//ZeroMemory(msg, 1024);
+	//int bytesRes = recv(m_soc, msg, 1024, 0);
+
+	//std::cout << "Message from server: " << msg << std::endl;
+
+	Connection conn;
+	conn.isConnected = true;
+	conn.socket = m_soc;
+	conn.ip = "";
+	conn.port = ntohs(m_myAddr.sin_port);
+	conn.id = 0;
+	conn.thread = new std::thread(&Network::Listen, this, conn); //Create new listening thread listening for the host
+	m_connections.push_back(conn);
 
 	m_isInitialized = true;
 	m_isServer = false;
@@ -122,7 +102,7 @@ bool Network::SetupClient(const char * IP_adress, unsigned short hostport)
 	return true;
 }
 
-bool Network::Send(const char * message, size_t size, int receiverID)
+bool Network::Send(const char* message, size_t size, int receiverID)
 {
 	Connection conn;
 	{
@@ -142,7 +122,7 @@ bool Network::Send(const char * message, size_t size, int receiverID)
 	return true;
 }
 
-bool Network::Send(const char * message, size_t size, Connection conn)
+bool Network::Send(const char* message, size_t size, Connection conn)
 {
 	if (!conn.isConnected)
 		return false;
@@ -160,7 +140,7 @@ void Network::WaitForNewConnections()
 		sockaddr_in client;
 		int clientSize = sizeof(client);
 
-		SOCKET clientSocket = accept(m_soc, (sockaddr*)&client, &clientSize);
+		SOCKET clientSocket = accept(m_soc, (sockaddr*)& client, &clientSize);
 		if (clientSocket == INVALID_SOCKET) {
 			//Do something
 			return;
@@ -216,7 +196,7 @@ void Network::Listen(const Connection conn)
 			break;
 		default:
 			std::cout << "Received: " << msg << std::endl;
-			//Send(msg, bytesReceived + 1, conn);
+			//Send(msg, (size_t)(bytesReceived) + 1, conn);
 			break;
 		}
 	}

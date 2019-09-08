@@ -2,6 +2,7 @@
 #include <WS2tcpip.h>
 #pragma comment (lib, "ws2_32.lib")
 #include <vector>
+#include <unordered_map>
 #include <string>
 //#include <iostream>
 #include <thread>
@@ -10,14 +11,21 @@
 #define MAX_PACKAGE_SIZE 64
 #define MAX_AWAITING_PACKAGES 1000
 
+typedef unsigned long long ConnectionID;
+typedef std::chrono::time_point<std::chrono::steady_clock> Time;
+typedef std::chrono::steady_clock Clock;
 
 struct Connection
 {
 	std::string ip, port;
-	int id;
+	ConnectionID id;
 	bool isConnected;
 	SOCKET socket;
 	std::thread* thread;//The thread used to listen for messages
+	int ping;
+	int lastPingID;
+	Time lastPing;
+
 	Connection() {
 		id = -2;
 		isConnected = false;
@@ -40,6 +48,12 @@ struct Package {
 class Network
 {
 public:
+	enum class HostFlags : USHORT
+	{
+		USE_RANDOM_IDS = 1U,//This will increese security
+		ALLOW_CLIENT_ID_REQUEST = 2U, //Allow a client to reconnect with the same id if they remember it after a disconnect
+	};
+
 	Network();
 	~Network();
 
@@ -48,11 +62,11 @@ public:
 	/*
 		Call SetupHost() to initialize a host socket. Dont call this and SetupHost() in the same application.
 	*/
-	bool SetupHost(unsigned short port);
+	bool SetupHost(unsigned short port, USHORT hostFlags = (USHORT)HostFlags::USE_RANDOM_IDS | (USHORT)HostFlags::ALLOW_CLIENT_ID_REQUEST);
 	/*
 		Call SetupClient() to initialize a client socket. Dont call this and SetupHost() in the same application.
 	*/
-	bool SetupClient(const char* host_ip, unsigned short hostport);
+	bool SetupClient(const char* host_ip, unsigned short hostport, ConnectionID reconnectI = 0);
 	/*
 		Send a message to connection "receiverID".
 		If SetupClient has been called, any number passed to receiverID will all send to the connected host.
@@ -60,11 +74,11 @@ public:
 
 		Return true if message could be sent to all receivers.
 	*/
-	bool Send(const char* message, size_t size, int receiverID = 0);
-	bool Send(const char* message, size_t size, Connection conn);
-	
+	bool Send(const char* message, size_t size, ConnectionID receiverID = 0);
+	bool Send(const char* message, size_t size, const Connection* conn);
+
 private:
-	void (*m_callbackfunction)(Package); //Function pointer to the ProcessPackages function
+	//void (*m_callbackfunction)(Package); //Function pointer to the ProcessPackages function
 
 	SOCKET m_soc = 0;
 	sockaddr_in m_myAddr = {};
@@ -72,8 +86,12 @@ private:
 
 	bool m_isServer = false;
 	bool m_isInitialized = false;
+	USHORT m_hostFlags;
+	ConnectionID m_nextID = 0; //Only used if m_useRandomIDs == false
+	ConnectionID m_myClientID = 0; //Used by clients only
+
 	/*Do not access m_connections without mutex lock*/
-	std::vector<Connection> m_connections;
+	std::unordered_map<size_t, Connection*> m_connections;
 	std::mutex m_mutex_connections;
 
 	Package* m_awaitingPackages;
@@ -81,6 +99,7 @@ private:
 	std::mutex m_mutex_packages;
 	//std::mutex m_mutex_pend;
 
+	ConnectionID GenerateID();
 
 	/*
 		Only used by the server. This function is called in a new thread and waits for new incomming connection requests.
@@ -95,5 +114,7 @@ private:
 
 		Host connection requests is handled in WaitForNewConnections()
 	*/
-	void Listen(const Connection conn);//Rename this function
+	void Listen(const Connection* conn);//Rename this function
+
+	void Pinger();
 };

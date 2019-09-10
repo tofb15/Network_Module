@@ -101,6 +101,7 @@ private:
 	std::mutex m_mutex_packages;
 	//std::mutex m_mutex_pend;
 
+	void AddNetworkEvent(NetworkEvent n, int dataSize);
 
 	/*
 		Only used by the server. This function is called in a new thread and waits for new incomming connection requests.

@@ -185,6 +185,20 @@ bool Network::Send(const char* message, size_t size, Connection conn)
 	return true;
 }
 
+void Network::AddNetworkEvent(NetworkEvent n, int dataSize)
+{
+	std::lock_guard<std::mutex> lock(m_mutex_packages);
+	
+	memcpy(m_awaitingMessages[m_pend].msg, n.data->msg, dataSize);
+	m_awaitingEvents[m_pend].eventType = n.eventType;
+	m_awaitingEvents[m_pend].clientID = n.clientID;
+	m_awaitingEvents[m_pend].data = &m_awaitingMessages[m_pend];
+
+	m_pend = (m_pend + 1) % MAX_AWAITING_PACKAGES;
+	if (m_pend == m_pstart)
+		m_pstart++;
+}
+
 void Network::WaitForNewConnections()
 {
 	while (true)
@@ -227,6 +241,12 @@ void Network::WaitForNewConnections()
 
 void Network::Listen(const Connection conn)
 {
+
+	NetworkEvent nEvent;
+	nEvent.clientID = conn.id;
+	nEvent.eventType = NETWORK_EVENT_TYPE::CLIENT_JOINED;
+	AddNetworkEvent(nEvent, 0);
+
 	bool connectionIsClosed = false;
 	char msg[MAX_PACKAGE_SIZE];
 
@@ -243,25 +263,24 @@ void Network::Listen(const Connection conn)
 			printf("Client Disconnected\n");
 #endif // DEBUG_NETWORK
 			connectionIsClosed = true;
+			nEvent.eventType = NETWORK_EVENT_TYPE::CLIENT_DISCONNECTED;
+			AddNetworkEvent(nEvent, 0);
 			break;
 		case SOCKET_ERROR:
 #ifdef DEBUG_NETWORK
 			printf("Error Receiving: Disconnecting client.\n");
 #endif // DEBUG_NETWORK
 			connectionIsClosed = true;
+			nEvent.eventType = NETWORK_EVENT_TYPE::CLIENT_DISCONNECTED;
+			AddNetworkEvent(nEvent, 0);
 			break;
 		default:
-		{
-			std::lock_guard<std::mutex> lock(m_mutex_packages);
-			memcpy(m_awaitingMessages[m_pend].msg, msg, bytesReceived);
-			m_awaitingEvents[m_pend].eventType = NETWORK_EVENT_TYPE::MSG_RECEIVED;
-			m_awaitingEvents[m_pend].clientID = conn.id;
-			m_awaitingEvents[m_pend].data = &m_awaitingMessages[m_pend];
+		
+			nEvent.data = reinterpret_cast<MessageData*>(msg);
+			nEvent.eventType = NETWORK_EVENT_TYPE::MSG_RECEIVED;
 
-			m_pend = (m_pend + 1) % MAX_AWAITING_PACKAGES;
-			if (m_pend == m_pstart)
-				m_pstart++;
-		}
+			AddNetworkEvent(nEvent, bytesReceived);
+		
 			break;
 		}
 	}

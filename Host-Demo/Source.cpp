@@ -1,4 +1,4 @@
-#include "../TCP-Connect/NetworkModule.hpp"
+#include "../Network-Module/NetworkModule.hpp"
 
 static int counter = 0;
 

@@ -126,7 +126,7 @@
     <ClCompile Include="Source.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\TCP-Connect\TCP-Connect.vcxproj">
+    <ProjectReference Include="..\Network-Module\Network-Module.vcxproj">
       <Project>{8f6b338a-2a3b-4fa3-a104-7ce6135de5ad}</Project>
     </ProjectReference>
   </ItemGroup>

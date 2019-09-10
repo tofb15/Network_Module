@@ -58,13 +58,24 @@ int main() {
 
 	//Keep main from closing
 	while (ok) {
-		if (counter >= 3) {
-			counter = 0;
-
+		if (counter % 3 == 0) {
+			counter++;
 			n.Send(msg, sizeof(msg), -1);
 		}
-		n.CheckForPackages(&ProcessPackage);
+		if (counter < 320) {
+			n.CheckForPackages(&ProcessPackage);
+		}
+		else
+		{
+			ok = false;
+		}
 	};
+
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+
+	printf("Closing Server...");
+	n.Shutdown();
+	printf(" OK");
 
 	return 0;
 }

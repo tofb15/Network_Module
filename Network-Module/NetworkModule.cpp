@@ -185,6 +185,38 @@ bool Network::Send(const char* message, size_t size, Connection conn)
 	return true;
 }
 
+void Network::Shutdown()
+{
+	m_shutdown = true;
+
+	if (m_isServer) {
+		::shutdown(m_soc, 2);
+		if (closesocket(m_soc) == SOCKET_ERROR) {
+			printf("Error closing m_soc\n");
+		}
+		else if (m_clientAcceptThread) {
+			m_clientAcceptThread->join();
+		}
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(m_mutex_connections);
+		for (auto conn : m_connections)
+		{
+			::shutdown(conn.socket, 2);
+			if (closesocket(conn.socket) == SOCKET_ERROR) {
+				printf((std::string("Error closing socket") + std::to_string(conn.id) + "\n").c_str());
+			}
+			else if (conn.thread) {
+				conn.thread->join();
+			}
+		}
+	}
+
+	delete[] m_awaitingEvents;
+	delete[] m_awaitingMessages;
+}
+
 void Network::AddNetworkEvent(NetworkEvent n, int dataSize)
 {
 	std::lock_guard<std::mutex> lock(m_mutex_packages);
@@ -201,7 +233,7 @@ void Network::AddNetworkEvent(NetworkEvent n, int dataSize)
 
 void Network::WaitForNewConnections()
 {
-	while (true)
+	while (!m_shutdown)
 	{
 		sockaddr_in client;
 		int clientSize = sizeof(client);
@@ -250,7 +282,7 @@ void Network::Listen(const Connection conn)
 	bool connectionIsClosed = false;
 	char msg[MAX_PACKAGE_SIZE];
 
-	while (!connectionIsClosed) {
+	while (!connectionIsClosed && !m_shutdown) {
 		ZeroMemory(msg, sizeof(msg));
 		int bytesReceived = recv(conn.socket, msg, MAX_PACKAGE_SIZE, 0);
 #ifdef DEBUG_NETWORK

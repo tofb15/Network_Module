@@ -9,6 +9,7 @@
 
 #define MAX_PACKAGE_SIZE 64
 #define MAX_AWAITING_PACKAGES 1000
+#define DEBUG_NETWORK
 
 typedef unsigned long long ConnectionID;
 
@@ -83,7 +84,10 @@ public:
 	bool Send(const char* message, size_t size, ConnectionID receiverID = 0);
 	bool Send(const char* message, size_t size, Connection conn);
 	
+	void Shutdown();
+
 private:
+	bool m_shutdown = false;
 	SOCKET m_soc = 0;
 	sockaddr_in m_myAddr = {};
 	std::thread* m_clientAcceptThread = nullptr;

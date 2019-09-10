@@ -2,13 +2,35 @@
 #include <string>
 #include <chrono>
 
-void CALLBACK ProcessPackage(Package p) {
-
-	std::string s = "I Can See A Message That Says: ";
-	s += p.msg;
+//MessageRecieved: Do whatever
+void DecodeMessage(NetworkEvent nEvent) {
+	std::string s = "Client #" + std::to_string(nEvent.clientID) + " says: ";
+	s += nEvent.data->msg;
 	s += "\n";
 
 	printf(s.c_str());
+}
+
+void CALLBACK ProcessPackage(NetworkEvent nEvent) {
+	switch (nEvent.eventType)
+	{
+	case NETWORK_EVENT_TYPE::NETWORK_ERROR:
+		break;
+	case NETWORK_EVENT_TYPE::CLIENT_JOINED:
+		//not used by clients
+		break;
+	case NETWORK_EVENT_TYPE::CLIENT_DISCONNECTED:
+		//not used by clients
+		break;
+	case NETWORK_EVENT_TYPE::CLIENT_RECONNECTED:
+		//not used by clients
+		break;
+	case NETWORK_EVENT_TYPE::MSG_RECEIVED:
+		DecodeMessage(nEvent);
+		break;
+	default:
+		break;
+	}
 }
 
 int main() {

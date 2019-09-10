@@ -2,13 +2,49 @@
 
 static int counter = 0;
 
-void CALLBACK ProcessPackage(Package p) {
+//PlayerJoined: Do whatever
+void PlayerJoined(ConnectionID id) {
+	printf((std::string("New player Joined with id: ") + std::to_string(id) + "\n").c_str());
+}
+//PlayerDisconnected: Do whatever
+void PlayerDisconnected(ConnectionID id) {
+	printf((std::string("Player Disconnected with id: ") + std::to_string(id) + "\n").c_str());
+}
+//PlayerReconnected: Do whatever
+void PlayerReconnected(ConnectionID id) {
+	printf((std::string("Player Reconnected with id: ") + std::to_string(id) + "\n").c_str());
+}
+//MessageRecieved: Do whatever
+void DecodeMessage(NetworkEvent nEvent) {
 	counter++;
-	std::string s = "Client #" + std::to_string(p.senderId) + " says: ";
-	s += p.msg;
+	std::string s = "Client #" + std::to_string(nEvent.clientID) + " says: ";
+	s += nEvent.data->msg;
 	s += "\n";
 
 	printf(s.c_str());
+}
+
+void CALLBACK ProcessPackage(NetworkEvent nEvent) {
+
+	switch (nEvent.eventType)
+	{
+	case NETWORK_EVENT_TYPE::NETWORK_ERROR:
+		break;
+	case NETWORK_EVENT_TYPE::CLIENT_JOINED:
+		PlayerJoined(nEvent.clientID);
+		break;
+	case NETWORK_EVENT_TYPE::CLIENT_DISCONNECTED:
+		PlayerDisconnected(nEvent.clientID);
+		break;
+	case NETWORK_EVENT_TYPE::CLIENT_RECONNECTED:
+		PlayerReconnected(nEvent.clientID);
+		break;
+	case NETWORK_EVENT_TYPE::MSG_RECEIVED:
+		DecodeMessage(nEvent);
+		break;
+	default:
+		break;
+	}
 }
 
 int main() {

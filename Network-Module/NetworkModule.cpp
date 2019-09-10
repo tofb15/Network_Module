@@ -7,7 +7,7 @@ Network::Network() {}
 
 Network::~Network() {}
 
-void Network::CheckForPackages(void(*m_callbackfunction)(Package))
+void Network::CheckForPackages(void(*m_callbackfunction)(NetworkEvent))
 {
 
 	bool morePackages = true;
@@ -20,7 +20,7 @@ void Network::CheckForPackages(void(*m_callbackfunction)(Package))
 			break;
 		}
 
-		m_callbackfunction(m_awaitingPackages[m_pstart]);
+		m_callbackfunction(m_awaitingEvents[m_pstart]);
 
 		m_pstart = (m_pstart + 1) % MAX_AWAITING_PACKAGES;
 	}
@@ -32,7 +32,8 @@ bool Network::SetupHost(unsigned short port)
 	if (m_isInitialized)
 		return false;
 
-	m_awaitingPackages = new Package [MAX_AWAITING_PACKAGES];
+	m_awaitingMessages = new MessageData[MAX_AWAITING_PACKAGES];
+	m_awaitingEvents = new NetworkEvent[MAX_AWAITING_PACKAGES];
 
 	WSADATA data;
 	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
@@ -79,7 +80,8 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport)
 	if (m_isInitialized)
 		return false;
 
-	m_awaitingPackages = new Package[MAX_AWAITING_PACKAGES];
+	m_awaitingMessages = new MessageData[MAX_AWAITING_PACKAGES];
+	m_awaitingEvents = new NetworkEvent[MAX_AWAITING_PACKAGES];
 
 	WSADATA data;
 	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
@@ -132,7 +134,7 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport)
 	return true;
 }
 
-bool Network::Send(const char* message, size_t size, int receiverID)
+bool Network::Send(const char* message, size_t size, ConnectionID receiverID)
 {
 	if (receiverID == -1 && m_isServer) {
 		int n = 0;
@@ -200,9 +202,12 @@ void Network::WaitForNewConnections()
  
 
 		inet_ntop(AF_INET, &client.sin_addr, host, NI_MAXHOST);
+
+#ifdef DEBUG_NETWORK
 		std::string s = host;
 		s += " connected on port " + std::to_string(ntohs(client.sin_port)) + "\n";
 		printf(s.c_str());
+#endif // DEBUG_NETWORK
 
 		Connection conn;
 		conn.isConnected = true;
@@ -228,23 +233,31 @@ void Network::Listen(const Connection conn)
 	while (!connectionIsClosed) {
 		ZeroMemory(msg, sizeof(msg));
 		int bytesReceived = recv(conn.socket, msg, MAX_PACKAGE_SIZE, 0);
+#ifdef DEBUG_NETWORK
 		printf((std::string("bytesReceived: ") + std::to_string(bytesReceived) + "\n").c_str());
-		
+#endif // DEBUG_NETWORK		
 		switch (bytesReceived)
 		{
 		case 0:
+#ifdef DEBUG_NETWORK
 			printf("Client Disconnected\n");
+#endif // DEBUG_NETWORK
 			connectionIsClosed = true;
 			break;
 		case SOCKET_ERROR:
+#ifdef DEBUG_NETWORK
 			printf("Error Receiving: Disconnecting client.\n");
+#endif // DEBUG_NETWORK
 			connectionIsClosed = true;
 			break;
 		default:
 		{
 			std::lock_guard<std::mutex> lock(m_mutex_packages);
-			m_awaitingPackages[m_pend].senderId = conn.id;
-			memcpy(m_awaitingPackages[m_pend].msg, msg, bytesReceived);
+			memcpy(m_awaitingMessages[m_pend].msg, msg, bytesReceived);
+			m_awaitingEvents[m_pend].eventType = NETWORK_EVENT_TYPE::MSG_RECEIVED;
+			m_awaitingEvents[m_pend].clientID = conn.id;
+			m_awaitingEvents[m_pend].data = &m_awaitingMessages[m_pend];
+
 			m_pend = (m_pend + 1) % MAX_AWAITING_PACKAGES;
 			if (m_pend == m_pstart)
 				m_pstart++;

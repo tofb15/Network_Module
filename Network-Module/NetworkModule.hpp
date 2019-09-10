@@ -10,16 +10,17 @@
 #define MAX_PACKAGE_SIZE 64
 #define MAX_AWAITING_PACKAGES 1000
 
+typedef unsigned long long ConnectionID;
 
 struct Connection
 {
 	std::string ip, port;
-	int id;
+	ConnectionID id;
 	bool isConnected;
 	SOCKET socket;
 	std::thread* thread;//The thread used to listen for messages
 	Connection() {
-		id = -2;
+		id = 0;
 		isConnected = false;
 		socket = NULL;
 		ip = port = "";
@@ -27,9 +28,28 @@ struct Connection
 	}
 };
 
-struct Package {
-	int senderId;
+enum class NETWORK_EVENT_TYPE {
+	NETWORK_ERROR,
+	CLIENT_JOINED,
+	CLIENT_DISCONNECTED,
+	CLIENT_RECONNECTED,
+	MSG_RECEIVED,
+};
+
+struct MessageData {
 	char msg[MAX_PACKAGE_SIZE];
+};
+
+struct NetworkEvent {
+	NETWORK_EVENT_TYPE eventType;
+	ConnectionID clientID;
+	MessageData* data;
+
+	NetworkEvent() {
+		eventType = NETWORK_EVENT_TYPE::NETWORK_ERROR;
+		clientID = 0;
+		data = nullptr;
+	}
 };
 
 /*
@@ -43,7 +63,7 @@ public:
 	Network();
 	~Network();
 
-	void CheckForPackages(void (*m_callbackfunction)(Package));
+	void CheckForPackages(void (*m_callbackfunction)(NetworkEvent));
 
 	/*
 		Call SetupHost() to initialize a host socket. Dont call this and SetupHost() in the same application.
@@ -60,12 +80,10 @@ public:
 
 		Return true if message could be sent to all receivers.
 	*/
-	bool Send(const char* message, size_t size, int receiverID = 0);
+	bool Send(const char* message, size_t size, ConnectionID receiverID = 0);
 	bool Send(const char* message, size_t size, Connection conn);
 	
 private:
-	void (*m_callbackfunction)(Package); //Function pointer to the ProcessPackages function
-
 	SOCKET m_soc = 0;
 	sockaddr_in m_myAddr = {};
 	std::thread* m_clientAcceptThread = nullptr;
@@ -76,7 +94,9 @@ private:
 	std::vector<Connection> m_connections;
 	std::mutex m_mutex_connections;
 
-	Package* m_awaitingPackages;
+	MessageData* m_awaitingMessages;
+	NetworkEvent* m_awaitingEvents;
+
 	int m_pstart = 0, m_pend = 0;
 	std::mutex m_mutex_packages;
 	//std::mutex m_mutex_pend;

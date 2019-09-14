@@ -10,6 +10,7 @@ void PlayerJoined(ConnectionID id) {
 void PlayerDisconnected(ConnectionID id) {
 	printf((std::string("Player Disconnected with id: ") + std::to_string(id) + "\n").c_str());
 }
+
 //PlayerReconnected: Do whatever
 void PlayerReconnected(ConnectionID id) {
 	printf((std::string("Player Reconnected with id: ") + std::to_string(id) + "\n").c_str());
@@ -51,19 +52,19 @@ int main() {
 	SetConsoleTitle(("This is The Host"));
 
 	Network n;
-	bool ok = n.SetupHost(54000);
+	bool ok = n.setupHost(54000);
 
 	char msg[] = "Server Says Hi!";
-	n.Send(msg, sizeof(msg), -1);
+	n.send(msg, sizeof(msg), -1);
 
 	//Keep main from closing
 	while (ok) {
 		if (counter % 3 == 0) {
 			counter++;
-			n.Send(msg, sizeof(msg), -1);
+			n.send(msg, sizeof(msg), -1);
 		}
 		if (counter < 320) {
-			n.CheckForPackages(&ProcessPackage);
+			n.checkForPackages(&ProcessPackage);
 		}
 		else
 		{
@@ -74,7 +75,7 @@ int main() {
 	std::this_thread::sleep_for(std::chrono::seconds(2));
 
 	printf("Closing Server...");
-	n.Shutdown();
+	n.shutdown();
 	printf(" OK");
 
 	return 0;

@@ -39,7 +39,7 @@ int main() {
 
 	Network n;
 	//bool ok = n.SetupClient("192.168.1.179", 54000);
-	bool ok = n.SetupClient("127.0.0.1", 54000);
+	bool ok = n.setupClient("127.0.0.1", 54000);
 
 	if (!ok) {
 		return 0;
@@ -49,16 +49,16 @@ int main() {
 	{
 		std::string s = "Hello Server for the #" + std::to_string(i+1) + " time!";
 		//std::this_thread::sleep_for(std::chrono::milliseconds(10));
-		if (!n.Send(s.c_str(), s.length() + 1)) {
+		if (!n.send(s.c_str(), s.length() + 1)) {
 			printf(std::string("Failed to send message: " + s + "\n").c_str());
 		}
 
-		n.CheckForPackages(&ProcessPackage);
+		n.checkForPackages(&ProcessPackage);
 	}
 
 	while (true)
 	{
-		n.CheckForPackages(&ProcessPackage);
+		n.checkForPackages(&ProcessPackage);
 	}
 
 	return 0;

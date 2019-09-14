@@ -20,7 +20,7 @@ void PlayerReconnected(TCP_CONNECTION_ID id) {
 void DecodeMessage(NetworkEvent nEvent) {
 	counter++;
 	std::string s = "Client #" + std::to_string(nEvent.clientID) + " says: ";
-	s += nEvent.data->msg;
+	s += nEvent.data->rawMsg;
 	s += "\n";
 
 	printf(s.c_str());
@@ -56,7 +56,8 @@ int main() {
 	std::cin >> a;
 
 	Network n;
-	bool ok = n.setupHost(54000, Network::HostFlags::USE_RANDOM_IDS | Network::HostFlags::ENABLE_LAN_SEARCH_VISIBILITY);
+	n.initialize();
+	bool ok = n.host(54000, Network::HostFlags::USE_RANDOM_IDS | Network::HostFlags::ENABLE_LAN_SEARCH_VISIBILITY);
 
 	char msg[] = "Server Says Hi!";
 

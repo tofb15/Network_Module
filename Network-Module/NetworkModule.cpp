@@ -5,7 +5,32 @@
 
 Network::Network() {}
 
-Network::~Network() {}
+Network::~Network() {
+	delete[] m_awaitingEvents;
+	delete[] m_awaitingMessages;
+}
+
+bool Network::initialize()
+{
+	if (m_isInitialized) {
+		return false;
+	}
+
+	WSADATA data;
+	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
+	int status = WSAStartup(version, &data);
+	if (status != 0) {
+		printf("Error starting WSA\n");
+		return false;
+	}
+
+	m_awaitingMessages = new NetworkEventData[MAX_AWAITING_PACKAGES];
+	m_awaitingEvents = new NetworkEvent[MAX_AWAITING_PACKAGES];
+
+	m_isInitialized = true;
+
+	return false;
+}
 
 void Network::checkForPackages(void(*m_callbackfunction)(NetworkEvent))
 {
@@ -27,25 +52,17 @@ void Network::checkForPackages(void(*m_callbackfunction)(NetworkEvent))
 
 }
 
-bool Network::setupHost(unsigned short port, USHORT hostFlags)
+bool Network::host(unsigned short port, USHORT hostFlags)
 {
-	if (m_isInitialized)
+	if (!m_isInitialized) {
 		return false;
+	}
 
 	m_connections.clear();
 	m_connections.reserve(128);
 
 	m_hostFlags = hostFlags;
-	m_awaitingMessages = new MessageData[MAX_AWAITING_PACKAGES];
-	m_awaitingEvents = new NetworkEvent[MAX_AWAITING_PACKAGES];
-
-	WSADATA data;
-	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
-	int status = WSAStartup(version, &data);
-	if (status != 0) {
-		printf("Error starting WSA\n");
-		return false;
-	}
+	m_hostPort = port;
 	m_soc = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); //IPPROTO_TCP
 	if (m_soc == INVALID_SOCKET) {
 		printf("Error creating socket\n");
@@ -71,33 +88,22 @@ bool Network::setupHost(unsigned short port, USHORT hostFlags)
 	::listen(m_soc, SOMAXCONN);
 
 	m_shutdown = false;
-	m_isInitialized = true;
 	m_isServer = true;
 
 	//Start a new thread that will wait for new connections
 	m_clientAcceptThread = new std::thread(&Network::waitForNewConnections, this);
 	if (m_hostFlags & (USHORT)HostFlags::ENABLE_LAN_SEARCH_VISIBILITY) {
-		if (startUDPSocket(port + 1)) {
-			m_UDPListener = new std::thread(&Network::listenForUDP, this);
+		if (!startUDPSocket(m_udp_localbroadcastport)) {
+			return false;
 		}
 	}
 
 	return true;
 }
 
-bool Network::setupClient(const char* IP_adress, unsigned short hostport)
+bool Network::join(const char* IP_adress, unsigned short hostport)
 {
-	if (m_isInitialized)
-		return false;
-
-	m_awaitingMessages = new MessageData[MAX_AWAITING_PACKAGES];
-	m_awaitingEvents = new NetworkEvent[MAX_AWAITING_PACKAGES];
-
-	WSADATA data;
-	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
-	int status = WSAStartup(version, &data);
-	if (status != 0) {
-		printf("Error starting WSA\n");
+	if (!m_isInitialized) {
 		return false;
 	}
 
@@ -128,17 +134,6 @@ bool Network::setupClient(const char* IP_adress, unsigned short hostport)
 		return false;
 	}
 
-	//char tempMsg[MAX_PACKAGE_SIZE] = {};
-	/*char* test = reinterpret_cast<char*>(&reconnectID);
-	send(m_soc, test, sizeof(ConnectionID), 0);
-	recv(m_soc, reinterpret_cast<char*>(&m_myClientID), sizeof(ConnectionID), 0);*/
-
-	//m_myClientID = *reinterpret_cast<ConnectionID*>(tempMsg);
-	//if (reconnectID != -1) {
-	//	const char* test = reinterpret_cast<const char*>(&reconnectID);
-	//	//send(m_soc, test, sizeof(ConnectionID), 0);
-	//}
-	
 	Connection* conn = new Connection;
 	conn->isConnected = true;
 	conn->socket = m_soc;
@@ -148,9 +143,6 @@ bool Network::setupClient(const char* IP_adress, unsigned short hostport)
 	conn->thread = new std::thread(&Network::listen, this, conn); //Create new listening thread listening for the host
 	m_connections[conn->id] = conn;
 
-	startUDPSocket(hostport + 1);
-
-	m_isInitialized = true;
 	m_isServer = false;
 
 	return true;
@@ -224,9 +216,14 @@ bool Network::send(const char* message, size_t size, Connection* conn)
 
 bool Network::searchHostsOnLan()
 {	
-	char msg[MAX_PACKAGE_SIZE] = "AnyLanHostsHere?";
+	if (!startUDPSocket(m_udp_localbroadcastport)) {
+		return false;
+	}
 
-	if (::sendto(m_UDP_soc, msg, MAX_PACKAGE_SIZE, 0, (sockaddr*)&m_UDP_myAddr, sizeof(m_UDP_myAddr)) == SOCKET_ERROR) {
+	UDP_DATA udpdata = {0};
+	udpdata.package.packagetype = UDP_DATA_PACKAGE_TYPE_HOSTINFO_REQUEST;
+
+	if (::sendto(m_udp_broadcast_socket, (char*)&udpdata, sizeof(udpdata), 0, (sockaddr*)&m_udp_broadcast_address, sizeof(m_udp_broadcast_address)) == SOCKET_ERROR) {
 		int err = WSAGetLastError();
 		printf("Send Error: %d", err);
 		return false;
@@ -237,69 +234,136 @@ bool Network::searchHostsOnLan()
 
 bool Network::startUDPSocket(unsigned short port)
 {
-	m_UDP_soc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (m_UDP_soc == INVALID_SOCKET) {
+	ULONG bAllow = 1;
+
+	/*===UDP BROADCASTER===*/
+	if (m_udp_broadcast_socket > 0) {
+		return true;
+	}
+	m_udp_broadcast_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	
+	if (m_udp_broadcast_socket == INVALID_SOCKET) {
 		printf("Error creating socket with error: %d\n", WSAGetLastError());
 		return false;
 	}
 
-	ULONG bAllow = 1;
-	if (setsockopt(m_UDP_soc, SOL_SOCKET, SO_BROADCAST, (char*)& bAllow, sizeof(bAllow)) != 0) {
+	if (setsockopt(m_udp_broadcast_socket, SOL_SOCKET, SO_BROADCAST, (char*)& bAllow, sizeof(bAllow)) != 0) {
 		printf("Error setsockopt with error: %d\n", WSAGetLastError());
 		return false;
 	}
 
-	m_UDP_myAddr.sin_family = AF_INET;
-	m_UDP_myAddr.sin_port = htons(port);
-	if (m_isServer) {
-		m_UDP_myAddr.sin_addr.S_un.S_addr = INADDR_ANY;
+	m_udp_broadcast_address.sin_family = AF_INET;
+	m_udp_broadcast_address.sin_port = htons(port);
+	m_udp_broadcast_address.sin_addr.S_un.S_addr = INADDR_BROADCAST;
+	
+	/*===UDP LISTENER===*/
 
-		if (bind(m_UDP_soc, (sockaddr*)& m_UDP_myAddr, sizeof(m_UDP_myAddr)) == SOCKET_ERROR) {
-			printf("Error binding socket with error: %d\n", WSAGetLastError());
-			return false;
-		}
+	if (m_udp_directMessage_socket > 0) {
+		return true;
 	}
-	else {
-		m_UDP_myAddr.sin_addr.S_un.S_addr = INADDR_BROADCAST;
+	m_udp_directMessage_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+	if (m_udp_directMessage_socket == INVALID_SOCKET) {
+		printf("Error creating socket with error: %d\n", WSAGetLastError());
+		return false;
 	}
 
-	//if (m_isServer) {
-	//	if (bind(m_UDP_soc, (sockaddr*)& m_UDP_myAddr, sizeof(m_UDP_myAddr)) == SOCKET_ERROR) {
-	//		printf("Error binding socket with error: %d\n", WSAGetLastError());
-	//		return false;
-	//	}
-	//}
+	if (setsockopt(m_udp_directMessage_socket, SOL_SOCKET, SO_BROADCAST, (char*)& bAllow, sizeof(bAllow)) != 0) {
+		printf("Error setsockopt with error: %d\n", WSAGetLastError());
+		return false;
+	}
+	BOOL b = TRUE;
+	if (setsockopt(m_udp_directMessage_socket, SOL_SOCKET, SO_REUSEADDR, (char*)& b, sizeof(b)) != 0) {
+		printf("Error setsockopt with error: %d\n", WSAGetLastError());
+		return false;
+	}
 
-	//setsockopt(m_UDP_soc, SOL_SOCKET, SO_, (char*)& bAllow, sizeof(bAllow));
+	m_udp_direct_address.sin_family = AF_INET;
+	m_udp_direct_address.sin_port = htons(port);
+	m_udp_direct_address.sin_addr.S_un.S_addr = INADDR_ANY;
+
+	if (bind(m_udp_directMessage_socket, (sockaddr*)& m_udp_direct_address, sizeof(m_udp_direct_address)) == SOCKET_ERROR) {
+		printf("Error binding socket with error: %d\n", WSAGetLastError());
+		return false;
+	}
+
+	m_UDPListener = new std::thread(&Network::listenForUDP, this);
 
 	return true;
 }
 
 void Network::listenForUDP()
 {
-	char buffer[MAX_PACKAGE_SIZE];
+	UDP_DATA udpdata;
 	sockaddr_in client = {0};
 	int clientSize = sizeof(sockaddr_in);
-
-	char sendMSG[] = "Broadcast message from SLAVE TAG";
-
-	//if (sendto(m_UDP_soc, sendMSG, strlen(sendMSG) + 1, 0, (sockaddr*)& m_UDP_myAddr, sizeof(m_UDP_myAddr)) == SOCKET_ERROR) {
-	//	printf("Error Sending UDP : %d\n", WSAGetLastError());
-	//}
+	char clientIP[256];
 
 	while (!m_shutdown)
 	{
-		int bytesRec = recvfrom(m_UDP_soc, buffer, MAX_PACKAGE_SIZE, 0, (sockaddr*)& client, &clientSize);
+		memset(&udpdata, 0, sizeof(udpdata));
+		int bytesRec = recvfrom(m_udp_directMessage_socket, (char*)&udpdata, sizeof(udpdata), 0, (sockaddr*)& client, &clientSize);
 		if (bytesRec > 0) {
-			printf("Recived %d bytes : from UDP\n", bytesRec);
-			printf(buffer);
-			printf("\n");
+			ZeroMemory(&clientIP, 256);
+			inet_ntop(AF_INET, &client.sin_addr, clientIP, sizeof(clientIP));
+			client.sin_port = htons(m_udp_localbroadcastport);
+
+			switch (udpdata.package.packagetype)
+			{
+			case UDP_DATA_PACKAGE_TYPE_HOSTINFO:
+				if (!m_isServer && m_isInitialized) {
+#ifdef DEBUG_NETWORK
+					printf("UDP_DATA_PACKAGE_TYPE_HOSTINFO: %d - %s\n", udpdata.package.packageData.hostdata.port, udpdata.package.packageData.hostdata.description);
+#endif // DEBUG_NETWORK
+
+					NetworkEvent nEvent;
+					nEvent.eventType = NETWORK_EVENT_TYPE::HOST_ON_LAN_FOUND;
+					nEvent.clientID = 0;
+					NetworkEventData data = {0};
+					data.HostFoundOnLanData.hostPort = udpdata.package.packageData.hostdata.port;
+					memcpy(data.HostFoundOnLanData.hostIP, clientIP, sizeof(data.HostFoundOnLanData.hostIP));
+					nEvent.data = &data;
+					addNetworkEvent(nEvent, sizeof(data));
+				}
+				break;
+			case UDP_DATA_PACKAGE_TYPE_HOSTINFO_REQUEST:
+				if (m_isServer && m_isInitialized) {
+					UDP_DATA udpdata = { 0 };
+					udpdata.package.packagetype = UDP_DATA_PACKAGE_TYPE_HOSTINFO;
+					udpdata.package.packageData.hostdata.port = m_hostPort;
+
+					if (::sendto(m_udp_broadcast_socket, udpdata.raw_data, sizeof(udpdata), 0, (sockaddr*)& m_udp_broadcast_address, sizeof(sockaddr_in)) == SOCKET_ERROR) {
+#ifdef DEBUG_NETWORK
+						printf("Error sendto udp with error: %d\n", WSAGetLastError());
+#endif // DEBUG_NETWORK
+					}
+				}
+				break;
+			default:
+#ifdef DEBUG_NETWORK
+				printf("Not understanding UDP message: %s\n", udpdata.raw_data);
+#endif // DEBUG_NETWORK
+				break;
+			}	
 		}
 		else {
-			printf("Error recvfrom with error: %d\n", WSAGetLastError());		
+#ifdef DEBUG_NETWORK
+			printf("Error recvfrom with error: %d\n", WSAGetLastError());
+#endif // DEBUG_NETWORK
 		}
-
 	}
+}
+
+bool Network::udpSend(sockaddr* addr, char* msg, int msgSize)
+{
+	if (::sendto(m_udp_directMessage_socket, msg, msgSize, 0, addr, sizeof(sockaddr_in)) == SOCKET_ERROR) {
+#ifdef DEBUG_NETWORK
+		printf("Error sendto udp with error: %d\n", WSAGetLastError());
+#endif
+		return false;
+	}
+
+	return true;
 }
 
 TCP_CONNECTION_ID Network::generateID()
@@ -369,7 +433,7 @@ void Network::addNetworkEvent(NetworkEvent n, int dataSize)
 {
 	std::lock_guard<std::mutex> lock(m_mutex_packages);
 	
-	memcpy(m_awaitingMessages[m_pend].msg, n.data->msg, dataSize);
+	memcpy(m_awaitingMessages[m_pend].rawMsg, n.data->rawMsg, dataSize);
 	m_awaitingEvents[m_pend].eventType = n.eventType;
 	m_awaitingEvents[m_pend].clientID = n.clientID;
 	m_awaitingEvents[m_pend].data = &m_awaitingMessages[m_pend];
@@ -456,7 +520,7 @@ void Network::listen(const Connection* conn)
 #endif // DEBUG_NETWORK
 		default:
 		
-			nEvent.data = reinterpret_cast<MessageData*>(msg);
+			nEvent.data = reinterpret_cast<NetworkEventData*>(msg);
 			nEvent.eventType = NETWORK_EVENT_TYPE::MSG_RECEIVED;
 
 			addNetworkEvent(nEvent, bytesReceived);

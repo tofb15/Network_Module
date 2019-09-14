@@ -36,16 +36,22 @@ enum class NETWORK_EVENT_TYPE {
 	CLIENT_DISCONNECTED,
 	CLIENT_RECONNECTED,
 	MSG_RECEIVED,
+	HOST_ON_LAN_FOUND,
 };
 
-struct MessageData {
-	char msg[MAX_PACKAGE_SIZE];
+union NetworkEventData {
+	char rawMsg[MAX_PACKAGE_SIZE];
+	struct
+	{
+		USHORT hostPort;
+		char hostIP[MAX_PACKAGE_SIZE-2];
+	} HostFoundOnLanData;
 };
 
 struct NetworkEvent {
 	NETWORK_EVENT_TYPE eventType;
 	TCP_CONNECTION_ID clientID;
-	MessageData* data;
+	NetworkEventData* data;
 
 	NetworkEvent() {
 		eventType = NETWORK_EVENT_TYPE::NETWORK_ERROR;
@@ -57,8 +63,6 @@ struct NetworkEvent {
 /*
 	This function needs to be implemented by the application and passed to SetupHost or SetupClient.
 */
-//void CALLBACK ProcessPackage(Package p);
-
 class Network
 {
 public:
@@ -72,16 +76,17 @@ public:
 	Network();
 	~Network();
 
-	void checkForPackages(void (*m_callbackfunction)(NetworkEvent));
+	bool initialize();
 
+	void checkForPackages(void (*m_callbackfunction)(NetworkEvent));
 	/*
-		Call SetupHost() to initialize a host socket. Dont call this and SetupHost() in the same application.
+		Call host() to a host session. Dont call this and join() in the same application.
 	*/
-	bool setupHost(unsigned short port, USHORT hostFlags = (USHORT)HostFlags::USE_RANDOM_IDS);
+	bool host(unsigned short port, USHORT hostFlags = (USHORT)HostFlags::USE_RANDOM_IDS);
 	/*
-		Call SetupClient() to initialize a client socket. Dont call this and SetupHost() in the same application.
+		Call join() to join an already hosted session. Dont call this and host() in the same application.
 	*/
-	bool setupClient(const char* host_ip, unsigned short hostport);
+	bool join(const char* host_ip, unsigned short hostport);
 	/*
 		Send a message to connection "receiverID".
 		If SetupClient has been called, any number passed to receiverID will all send to the connected host.
@@ -97,18 +102,48 @@ public:
 	void shutdown();
 
 private:
-	const char lanHostSearchMessage[MAX_PACKAGE_SIZE] = "AnyLanHostsHere?";
+
+	enum UDP_DATA_PACKAGE_TYPE : char
+	{
+		UDP_DATA_PACKAGE_TYPE_HOSTINFO = 1,
+		UDP_DATA_PACKAGE_TYPE_HOSTINFO_REQUEST = 2,
+	};
+
+	struct UDP_DATA
+	{
+		union {
+			char raw_data[MAX_PACKAGE_SIZE];
+			struct {
+				char packagetype;
+				char padding;//needed for correct memmory alignment
+				union {
+					char data[MAX_PACKAGE_SIZE-2];
+					struct
+					{
+						USHORT port;
+						char description[MAX_PACKAGE_SIZE - 4];
+					} hostdata;
+				} packageData;
+			} package;
+		};
+	};
 
 	bool m_shutdown = false;
 	
 	//TCP CONNECTION
 	SOCKET m_soc = 0;
-	sockaddr_in m_myAddr = {};
+	sockaddr_in m_myAddr = {0};
 	std::thread* m_clientAcceptThread = nullptr;
+	USHORT m_hostPort = 0;
 
 	//UDP CONNECTION
-	SOCKET m_UDP_soc = 0;
-	sockaddr_in m_UDP_myAddr = {};
+	const USHORT m_udp_localbroadcastport = 444;
+	SOCKET m_udp_broadcast_socket = 0;
+	SOCKET m_udp_directMessage_socket = 0;
+	sockaddr_in m_udp_broadcast_address = {0};
+	sockaddr_in m_udp_direct_address = {0};
+	const char m_lanHostSearchMessage[MAX_PACKAGE_SIZE] = "AnyLanHostsHere?";
+
 	std::thread* m_UDPListener = nullptr;
 
 	//GENERIC
@@ -122,7 +157,7 @@ private:
 	std::unordered_map<size_t, Connection*> m_connections;
 	std::mutex m_mutex_connections;
 
-	MessageData* m_awaitingMessages;
+	NetworkEventData* m_awaitingMessages;
 	NetworkEvent* m_awaitingEvents;
 
 	int m_pstart = 0, m_pend = 0;
@@ -130,6 +165,7 @@ private:
 	
 	bool startUDPSocket(unsigned short port);
 	void listenForUDP();
+	bool udpSend(sockaddr* addr, char* msg, int msgSize);
 
 	TCP_CONNECTION_ID generateID();
 	void addNetworkEvent(NetworkEvent n, int dataSize);

@@ -48,6 +48,8 @@ int main() {
 		return 0;
 	}
 
+	n.searchHostsOnLan();
+
 	for (size_t i = 0; i < 100; i++)
 	{
 		std::string s = "Hello Server for the #" + std::to_string(i+1) + " time!";

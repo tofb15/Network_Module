@@ -62,10 +62,11 @@ struct NetworkEvent {
 class Network
 {
 public:
-	enum class HostFlags : USHORT
+	enum HostFlags : USHORT
 	{
-		USE_RANDOM_IDS = 1U,//This will increese security
-		ALLOW_CLIENT_ID_REQUEST = 2U, //Allow a client to reconnect with the same id if they remember it after a disconnect
+		USE_RANDOM_IDS = 1U,
+		//ALLOW_CLIENT_ID_REQUEST = 2U, //Allow a client to reconnect with the same id if they remember it after a disconnect
+		ENABLE_LAN_SEARCH_VISIBILITY = 2U
 	};
 
 	Network();
@@ -76,7 +77,7 @@ public:
 	/*
 		Call SetupHost() to initialize a host socket. Dont call this and SetupHost() in the same application.
 	*/
-	bool setupHost(unsigned short port, USHORT hostFlags = (USHORT)HostFlags::USE_RANDOM_IDS | (USHORT)HostFlags::ALLOW_CLIENT_ID_REQUEST);
+	bool setupHost(unsigned short port, USHORT hostFlags = (USHORT)HostFlags::USE_RANDOM_IDS);
 	/*
 		Call SetupClient() to initialize a client socket. Dont call this and SetupHost() in the same application.
 	*/
@@ -91,14 +92,26 @@ public:
 	bool send(const char* message, size_t size, TCP_CONNECTION_ID receiverID = 0);
 	bool send(const char* message, size_t size, Connection* conn);
 	
+	bool searchHostsOnLan();
+
 	void shutdown();
 
 private:
+	const char lanHostSearchMessage[MAX_PACKAGE_SIZE] = "AnyLanHostsHere?";
+
 	bool m_shutdown = false;
+	
+	//TCP CONNECTION
 	SOCKET m_soc = 0;
 	sockaddr_in m_myAddr = {};
 	std::thread* m_clientAcceptThread = nullptr;
 
+	//UDP CONNECTION
+	SOCKET m_UDP_soc = 0;
+	sockaddr_in m_UDP_myAddr = {};
+	std::thread* m_UDPListener = nullptr;
+
+	//GENERIC
 	bool m_isServer = false;
 	bool m_isInitialized = false;
 	USHORT m_hostFlags;
@@ -114,7 +127,9 @@ private:
 
 	int m_pstart = 0, m_pend = 0;
 	std::mutex m_mutex_packages;
-	//std::mutex m_mutex_pend;
+	
+	bool startUDPSocket(unsigned short port);
+	void listenForUDP();
 
 	TCP_CONNECTION_ID generateID();
 	void addNetworkEvent(NetworkEvent n, int dataSize);

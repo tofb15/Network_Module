@@ -76,6 +76,11 @@ bool Network::setupHost(unsigned short port, USHORT hostFlags)
 
 	//Start a new thread that will wait for new connections
 	m_clientAcceptThread = new std::thread(&Network::waitForNewConnections, this);
+	if (m_hostFlags & (USHORT)HostFlags::ENABLE_LAN_SEARCH_VISIBILITY) {
+		if (startUDPSocket(port + 1)) {
+			m_UDPListener = new std::thread(&Network::listenForUDP, this);
+		}
+	}
 
 	return true;
 }
@@ -142,6 +147,8 @@ bool Network::setupClient(const char* IP_adress, unsigned short hostport)
 	conn->id = 0;
 	conn->thread = new std::thread(&Network::listen, this, conn); //Create new listening thread listening for the host
 	m_connections[conn->id] = conn;
+
+	startUDPSocket(hostport + 1);
 
 	m_isInitialized = true;
 	m_isServer = false;
@@ -213,6 +220,86 @@ bool Network::send(const char* message, size_t size, Connection* conn)
 	}
 		
 	return true;
+}
+
+bool Network::searchHostsOnLan()
+{	
+	char msg[MAX_PACKAGE_SIZE] = "AnyLanHostsHere?";
+
+	if (::sendto(m_UDP_soc, msg, MAX_PACKAGE_SIZE, 0, (sockaddr*)&m_UDP_myAddr, sizeof(m_UDP_myAddr)) == SOCKET_ERROR) {
+		int err = WSAGetLastError();
+		printf("Send Error: %d", err);
+		return false;
+	}
+
+	return true;
+}
+
+bool Network::startUDPSocket(unsigned short port)
+{
+	m_UDP_soc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (m_UDP_soc == INVALID_SOCKET) {
+		printf("Error creating socket with error: %d\n", WSAGetLastError());
+		return false;
+	}
+
+	ULONG bAllow = 1;
+	if (setsockopt(m_UDP_soc, SOL_SOCKET, SO_BROADCAST, (char*)& bAllow, sizeof(bAllow)) != 0) {
+		printf("Error setsockopt with error: %d\n", WSAGetLastError());
+		return false;
+	}
+
+	m_UDP_myAddr.sin_family = AF_INET;
+	m_UDP_myAddr.sin_port = htons(port);
+	if (m_isServer) {
+		m_UDP_myAddr.sin_addr.S_un.S_addr = INADDR_ANY;
+
+		if (bind(m_UDP_soc, (sockaddr*)& m_UDP_myAddr, sizeof(m_UDP_myAddr)) == SOCKET_ERROR) {
+			printf("Error binding socket with error: %d\n", WSAGetLastError());
+			return false;
+		}
+	}
+	else {
+		m_UDP_myAddr.sin_addr.S_un.S_addr = INADDR_BROADCAST;
+	}
+
+	//if (m_isServer) {
+	//	if (bind(m_UDP_soc, (sockaddr*)& m_UDP_myAddr, sizeof(m_UDP_myAddr)) == SOCKET_ERROR) {
+	//		printf("Error binding socket with error: %d\n", WSAGetLastError());
+	//		return false;
+	//	}
+	//}
+
+	//setsockopt(m_UDP_soc, SOL_SOCKET, SO_, (char*)& bAllow, sizeof(bAllow));
+
+	return true;
+}
+
+void Network::listenForUDP()
+{
+	char buffer[MAX_PACKAGE_SIZE];
+	sockaddr_in client = {0};
+	int clientSize = sizeof(sockaddr_in);
+
+	char sendMSG[] = "Broadcast message from SLAVE TAG";
+
+	//if (sendto(m_UDP_soc, sendMSG, strlen(sendMSG) + 1, 0, (sockaddr*)& m_UDP_myAddr, sizeof(m_UDP_myAddr)) == SOCKET_ERROR) {
+	//	printf("Error Sending UDP : %d\n", WSAGetLastError());
+	//}
+
+	while (!m_shutdown)
+	{
+		int bytesRec = recvfrom(m_UDP_soc, buffer, MAX_PACKAGE_SIZE, 0, (sockaddr*)& client, &clientSize);
+		if (bytesRec > 0) {
+			printf("Recived %d bytes : from UDP\n", bytesRec);
+			printf(buffer);
+			printf("\n");
+		}
+		else {
+			printf("Error recvfrom with error: %d\n", WSAGetLastError());		
+		}
+
+	}
 }
 
 TCP_CONNECTION_ID Network::generateID()

@@ -56,7 +56,7 @@ int main() {
 	std::cin >> a;
 
 	Network n;
-	bool ok = n.setupHost(54000);
+	bool ok = n.setupHost(54000, Network::HostFlags::USE_RANDOM_IDS | Network::HostFlags::ENABLE_LAN_SEARCH_VISIBILITY);
 
 	char msg[] = "Server Says Hi!";
 
@@ -64,7 +64,7 @@ int main() {
 	while (ok) {
 		if (counter % 3 == 0) {
 			counter++;
-			printf("====Broding====");
+			printf("====TCP Broding====\n");
 			n.send(msg, sizeof(msg), -1);
 		}
 		if (counter < 320) {

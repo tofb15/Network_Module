@@ -3,9 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.29215.179
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Network-Module", "TCP-Connect\TCP-Connect.vcxproj", "{8F6B338A-2A3B-4FA3-A104-7CE6135DE5AD}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Network-Module", "Network-Module\Network-Module.vcxproj", "{8F6B338A-2A3B-4FA3-A104-7CE6135DE5AD}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Client-Demo", "Client\Client.vcxproj", "{8F2DBEBC-76C4-4A4E-B23A-A12B1914DB52}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Client-Demo", "Client-Demo\Client-Demo.vcxproj", "{8F2DBEBC-76C4-4A4E-B23A-A12B1914DB52}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Host-Demo", "Host-Demo\Host-Demo.vcxproj", "{A3DFDA9B-2610-40C0-816D-52F59CCE8171}"
 EndProject

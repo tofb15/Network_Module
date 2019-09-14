@@ -4,30 +4,25 @@
 #include <vector>
 #include <unordered_map>
 #include <string>
-//#include <iostream>
 #include <thread>
 #include <mutex>
 
 #define MAX_PACKAGE_SIZE 64
 #define MAX_AWAITING_PACKAGES 1000
+//#define DEBUG_NETWORK
 
-typedef unsigned long long ConnectionID;
-typedef std::chrono::time_point<std::chrono::steady_clock> Time;
-typedef std::chrono::steady_clock Clock;
+typedef unsigned long long TCP_CONNECTION_ID;
 
 struct Connection
-{
+{	
 	std::string ip, port;
-	ConnectionID id;
+	TCP_CONNECTION_ID id;
 	bool isConnected;
 	SOCKET socket;
 	std::thread* thread;//The thread used to listen for messages
-	int ping;
-	int lastPingID;
-	Time lastPing;
 
 	Connection() {
-		id = -2;
+		id = 0;
 		isConnected = false;
 		socket = NULL;
 		ip = port = "";
@@ -35,9 +30,28 @@ struct Connection
 	}
 };
 
-struct Package {
-	int senderId;
+enum class NETWORK_EVENT_TYPE {
+	NETWORK_ERROR,
+	CLIENT_JOINED,
+	CLIENT_DISCONNECTED,
+	CLIENT_RECONNECTED,
+	MSG_RECEIVED,
+};
+
+struct MessageData {
 	char msg[MAX_PACKAGE_SIZE];
+};
+
+struct NetworkEvent {
+	NETWORK_EVENT_TYPE eventType;
+	TCP_CONNECTION_ID clientID;
+	MessageData* data;
+
+	NetworkEvent() {
+		eventType = NETWORK_EVENT_TYPE::NETWORK_ERROR;
+		clientID = 0;
+		data = nullptr;
+	}
 };
 
 /*
@@ -57,16 +71,16 @@ public:
 	Network();
 	~Network();
 
-	void CheckForPackages(void (*m_callbackfunction)(Package));
+	void checkForPackages(void (*m_callbackfunction)(NetworkEvent));
 
 	/*
 		Call SetupHost() to initialize a host socket. Dont call this and SetupHost() in the same application.
 	*/
-	bool SetupHost(unsigned short port, USHORT hostFlags = (USHORT)HostFlags::USE_RANDOM_IDS | (USHORT)HostFlags::ALLOW_CLIENT_ID_REQUEST);
+	bool setupHost(unsigned short port, USHORT hostFlags = (USHORT)HostFlags::USE_RANDOM_IDS | (USHORT)HostFlags::ALLOW_CLIENT_ID_REQUEST);
 	/*
 		Call SetupClient() to initialize a client socket. Dont call this and SetupHost() in the same application.
 	*/
-	bool SetupClient(const char* host_ip, unsigned short hostport, ConnectionID reconnectI = 0);
+	bool setupClient(const char* host_ip, unsigned short hostport);
 	/*
 		Send a message to connection "receiverID".
 		If SetupClient has been called, any number passed to receiverID will all send to the connected host.
@@ -74,12 +88,13 @@ public:
 
 		Return true if message could be sent to all receivers.
 	*/
-	bool Send(const char* message, size_t size, ConnectionID receiverID = 0);
-	bool Send(const char* message, size_t size, const Connection* conn);
+	bool send(const char* message, size_t size, TCP_CONNECTION_ID receiverID = 0);
+	bool send(const char* message, size_t size, Connection* conn);
+	
+	void shutdown();
 
 private:
-	//void (*m_callbackfunction)(Package); //Function pointer to the ProcessPackages function
-
+	bool m_shutdown = false;
 	SOCKET m_soc = 0;
 	sockaddr_in m_myAddr = {};
 	std::thread* m_clientAcceptThread = nullptr;
@@ -87,25 +102,28 @@ private:
 	bool m_isServer = false;
 	bool m_isInitialized = false;
 	USHORT m_hostFlags;
-	ConnectionID m_nextID = 0; //Only used if m_useRandomIDs == false
-	ConnectionID m_myClientID = 0; //Used by clients only
+	TCP_CONNECTION_ID m_nextID = 0; //Only used if m_useRandomIDs == false
+	TCP_CONNECTION_ID m_myClientID = 0; //Used by clients only
 
 	/*Do not access m_connections without mutex lock*/
 	std::unordered_map<size_t, Connection*> m_connections;
 	std::mutex m_mutex_connections;
 
-	Package* m_awaitingPackages;
+	MessageData* m_awaitingMessages;
+	NetworkEvent* m_awaitingEvents;
+
 	int m_pstart = 0, m_pend = 0;
 	std::mutex m_mutex_packages;
 	//std::mutex m_mutex_pend;
 
-	ConnectionID GenerateID();
+	TCP_CONNECTION_ID generateID();
+	void addNetworkEvent(NetworkEvent n, int dataSize);
 
 	/*
 		Only used by the server. This function is called in a new thread and waits for new incomming connection requests.
 		Accepted connections are stored in m_connections. A new thread is created for each connection directly Listen() in order to listen for incomming messages from that connection;
 	*/
-	void WaitForNewConnections();
+	void waitForNewConnections();
 
 	/*
 		This function is called by multiple threads. Listen for incomming messages from one specific connection.
@@ -114,7 +132,6 @@ private:
 
 		Host connection requests is handled in WaitForNewConnections()
 	*/
-	void Listen(const Connection* conn);//Rename this function
 
-	void Pinger();
+	void listen(const Connection* conn);//Rename this function
 };

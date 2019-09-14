@@ -7,7 +7,7 @@ Network::Network() {}
 
 Network::~Network() {}
 
-void Network::CheckForPackages(void(*m_callbackfunction)(Package))
+void Network::checkForPackages(void(*m_callbackfunction)(NetworkEvent))
 {
 
 	bool morePackages = true;
@@ -20,23 +20,24 @@ void Network::CheckForPackages(void(*m_callbackfunction)(Package))
 			break;
 		}
 
-		m_callbackfunction(m_awaitingPackages[m_pstart]);
+		m_callbackfunction(m_awaitingEvents[m_pstart]);
 
 		m_pstart = (m_pstart + 1) % MAX_AWAITING_PACKAGES;
 	}
 
 }
 
-bool Network::SetupHost(unsigned short port, USHORT hostFlags)
+bool Network::setupHost(unsigned short port, USHORT hostFlags)
 {
 	if (m_isInitialized)
 		return false;
 
-	//Tell GenerateID() to use random ids or not.
-	//m_useRandomIDs = hostFlags & (USHORT)HostFlags::USE_RANDOM_IDS;
-	m_hostFlags = hostFlags;
+	m_connections.clear();
+	m_connections.reserve(128);
 
-	m_awaitingPackages = new Package [MAX_AWAITING_PACKAGES];
+	m_hostFlags = hostFlags;
+	m_awaitingMessages = new MessageData[MAX_AWAITING_PACKAGES];
+	m_awaitingEvents = new NetworkEvent[MAX_AWAITING_PACKAGES];
 
 	WSADATA data;
 	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
@@ -67,23 +68,25 @@ bool Network::SetupHost(unsigned short port, USHORT hostFlags)
 	setsockopt(m_soc, IPPROTO_TCP, TCP_NODELAY, (char*)&bOptVal, bOptLen);//Prepare the socket to listen
 	setsockopt(m_soc, IPPROTO_TCP, SO_SNDBUF, (char*)&iOptVal, iOptLen);//Prepare the socket to listen
 	
-	listen(m_soc, SOMAXCONN);
+	::listen(m_soc, SOMAXCONN);
 
+	m_shutdown = false;
 	m_isInitialized = true;
 	m_isServer = true;
 
 	//Start a new thread that will wait for new connections
-	m_clientAcceptThread = new std::thread(&Network::WaitForNewConnections, this);
+	m_clientAcceptThread = new std::thread(&Network::waitForNewConnections, this);
 
 	return true;
 }
 
-bool Network::SetupClient(const char* IP_adress, unsigned short hostport, ConnectionID reconnectID)
+bool Network::setupClient(const char* IP_adress, unsigned short hostport)
 {
 	if (m_isInitialized)
 		return false;
 
-	m_awaitingPackages = new Package[MAX_AWAITING_PACKAGES];
+	m_awaitingMessages = new MessageData[MAX_AWAITING_PACKAGES];
+	m_awaitingEvents = new NetworkEvent[MAX_AWAITING_PACKAGES];
 
 	WSADATA data;
 	WORD version = MAKEWORD(2, 2); // use version winsock 2.2
@@ -121,9 +124,9 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport, Connec
 	}
 
 	//char tempMsg[MAX_PACKAGE_SIZE] = {};
-	char* test = reinterpret_cast<char*>(&reconnectID);
+	/*char* test = reinterpret_cast<char*>(&reconnectID);
 	send(m_soc, test, sizeof(ConnectionID), 0);
-	recv(m_soc, reinterpret_cast<char*>(&m_myClientID), sizeof(ConnectionID), 0);
+	recv(m_soc, reinterpret_cast<char*>(&m_myClientID), sizeof(ConnectionID), 0);*/
 
 	//m_myClientID = *reinterpret_cast<ConnectionID*>(tempMsg);
 	//if (reconnectID != -1) {
@@ -131,14 +134,13 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport, Connec
 	//	//send(m_soc, test, sizeof(ConnectionID), 0);
 	//}
 	
-
 	Connection* conn = new Connection;
 	conn->isConnected = true;
 	conn->socket = m_soc;
 	conn->ip = "";
 	conn->port = ntohs(m_myAddr.sin_port);
 	conn->id = 0;
-	conn->thread = new std::thread(&Network::Listen, this, conn); //Create new listening thread listening for the host
+	conn->thread = new std::thread(&Network::listen, this, conn); //Create new listening thread listening for the host
 	m_connections[conn->id] = conn;
 
 	m_isInitialized = true;
@@ -147,21 +149,27 @@ bool Network::SetupClient(const char* IP_adress, unsigned short hostport, Connec
 	return true;
 }
 
-bool Network::Send(const char* message, size_t size, ConnectionID receiverID)
+bool Network::send(const char* message, size_t size, TCP_CONNECTION_ID receiverID)
 {
 	if (receiverID == -1 && m_isServer) {
-		//int n = 0;
-		//{
-		//	std::lock_guard<std::mutex> mu(m_mutex_connections);
-		//	n = m_connections.size();
-		//}
-		//int success = 0;
-		//for (int i = 0; i < n; i++)
-		//{
-		//	if (Send(message, size, i))
-		//		success++;
-		//}
-		//printf((std::string("Broadcasting to ") + std::to_string(success) + "/" + std::to_string(n) + " Clients: " + std::string(message) + "\n").c_str());
+		int n = 0;
+		{
+			std::lock_guard<std::mutex> mu(m_mutex_connections);
+			n = m_connections.size();
+		}
+		int success = 0;
+		for (int i = 0; i < n; i++)
+		{
+
+		}
+
+		Connection* conn = nullptr;
+		for (auto it : m_connections)
+		{
+			conn = it.second;
+			if(send(message, size, conn))
+				success++;
+		}
 
 		return true;
 	}	
@@ -169,46 +177,55 @@ bool Network::Send(const char* message, size_t size, ConnectionID receiverID)
 	char msg[MAX_PACKAGE_SIZE] = {0};
 	memcpy(msg, message, size);
 
-	Connection* conn;
+	Connection* conn = nullptr;
 	{
 		std::lock_guard<std::mutex> mu(m_mutex_connections);
-		if (receiverID > m_connections.size())
+		if (receiverID > m_connections.size()) {
 			return false;
+		}
 
 		conn = m_connections[receiverID];
 	}
 
-	if (!conn->isConnected)
+	if (!conn) {
 		return false;
+	}
 
-	if (send(conn->socket, msg, MAX_PACKAGE_SIZE, 0) == SOCKET_ERROR)
+	if (!conn->isConnected) {
 		return false;
+	}
+
+	if (::send(conn->socket, msg, MAX_PACKAGE_SIZE, 0) == SOCKET_ERROR) {
+		return false;
+	}
 
 	return true;
 }
 
-bool Network::Send(const char* message, size_t size, const Connection* conn)
+bool Network::send(const char* message, size_t size, Connection* conn)
 {
-	if (!conn->isConnected)
+	if (!conn->isConnected) {
 		return false;
+	}
 
-	if (send(conn->socket, message, size, 0) == SOCKET_ERROR)
+	if (::send(conn->socket, message, size, 0) == SOCKET_ERROR) {
 		return false;
-
+	}
+		
 	return true;
 }
 
-ConnectionID Network::GenerateID()
+TCP_CONNECTION_ID Network::generateID()
 {
-	ConnectionID id = 0;
+	TCP_CONNECTION_ID id = 0;
 
 	if (m_hostFlags & (USHORT)HostFlags::USE_RANDOM_IDS) {
-		int n = sizeof(ConnectionID) / sizeof(int);
+		int n = sizeof(TCP_CONNECTION_ID) / sizeof(int);
 
 		for (size_t i = 0; i < n; i++)
 		{
 			int r = rand();
-			id |= (ConnectionID)r << (i * 32);
+			id |= (TCP_CONNECTION_ID)r << (i * 32);
 		}
 	}
 	else {
@@ -218,9 +235,66 @@ ConnectionID Network::GenerateID()
 	return id;
 }
 
-void Network::WaitForNewConnections()
+void Network::shutdown()
 {
-	while (true)
+	m_shutdown = true;
+
+	if (m_isServer) {
+		::shutdown(m_soc, 2);
+		if (closesocket(m_soc) == SOCKET_ERROR) {
+#ifdef DEBUG_NETWORK
+			printf("Error closing m_soc\n");
+#endif
+		}
+		else if (m_clientAcceptThread) {
+			m_clientAcceptThread->join();
+			delete m_clientAcceptThread;
+		}
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(m_mutex_connections);
+		for (auto it : m_connections)
+		{
+			Connection* conn = it.second;
+			::shutdown(conn->socket, 2);
+			if (closesocket(conn->socket) == SOCKET_ERROR) {
+#ifdef DEBUG_NETWORK
+				printf((std::string("Error closing socket") + std::to_string(conn->id) + "\n").c_str());
+#endif
+			}
+			else if (conn->thread) {
+				conn->thread->join();
+				delete conn->thread;
+				delete conn;
+			}
+		}
+	}
+
+	delete[] m_awaitingEvents;
+	delete[] m_awaitingMessages;
+
+	m_connections.clear();
+	m_isInitialized = false;
+}
+
+void Network::addNetworkEvent(NetworkEvent n, int dataSize)
+{
+	std::lock_guard<std::mutex> lock(m_mutex_packages);
+	
+	memcpy(m_awaitingMessages[m_pend].msg, n.data->msg, dataSize);
+	m_awaitingEvents[m_pend].eventType = n.eventType;
+	m_awaitingEvents[m_pend].clientID = n.clientID;
+	m_awaitingEvents[m_pend].data = &m_awaitingMessages[m_pend];
+
+	m_pend = (m_pend + 1) % MAX_AWAITING_PACKAGES;
+	if (m_pend == m_pstart)
+		m_pstart++;
+}
+
+void Network::waitForNewConnections()
+{
+	while (!m_shutdown)
 	{
 		sockaddr_in client;
 		int clientSize = sizeof(client);
@@ -232,33 +306,10 @@ void Network::WaitForNewConnections()
 		}
 
 		char host[NI_MAXHOST] = { 0 }; // Client's remote name
- 
 
 		inet_ntop(AF_INET, &client.sin_addr, host, NI_MAXHOST);
-		std::string s = host;
-		s += " connected on port " + std::to_string(ntohs(client.sin_port)) + "\n";
-		printf(s.c_str());
 
-		ConnectionID id = 0;
-		recv(clientSocket, reinterpret_cast<char*>(&id), sizeof(ConnectionID), 0);
-		if (id != 0) {
-			s = "Client Requested to get id: " + std::to_string(id);
-			if (m_hostFlags & (USHORT)HostFlags::ALLOW_CLIENT_ID_REQUEST) {
-				s += "/t Accepted./n";
-			}
-			else {
-				s += "/t Denied./n";
-			}
-
-			//Check if id is valid
-
-			//Confirm client id
-			send(clientSocket, reinterpret_cast<char*>(&id), sizeof(ConnectionID), 0);
-
-			printf(s.c_str());
-		}
-
-		if (id == 0) {
+		if (true) {
 			Connection* conn = new Connection;
 			conn->isConnected = true;
 			conn->socket = clientSocket;
@@ -267,68 +318,63 @@ void Network::WaitForNewConnections()
 
 			bool ok = false;
 			do {
-				conn->id = GenerateID();
+				conn->id = generateID();
 				if (m_connections.find(conn->id) == m_connections.end()) {
 					ok = true;
 				}
 			} while (!ok);
 
-			conn->thread = new std::thread(&Network::Listen, this, conn); //Create new listening thread for the new connection
+			conn->thread = new std::thread(&Network::listen, this, conn); //Create new listening thread for the new connection
 			m_connections[conn->id] = conn;
-		}
-		else {
-
 		}
 	}
 }
 
-void Network::Listen(const Connection* conn)
+void Network::listen(const Connection* conn)
 {
+	NetworkEvent nEvent;
+	nEvent.clientID = conn->id;
+	nEvent.eventType = NETWORK_EVENT_TYPE::CLIENT_JOINED;
+	addNetworkEvent(nEvent, 0);
+
 	bool connectionIsClosed = false;
 	char msg[MAX_PACKAGE_SIZE];
 
-	while (!connectionIsClosed) {
+	while (!connectionIsClosed && !m_shutdown) {
 		ZeroMemory(msg, sizeof(msg));
 		int bytesReceived = recv(conn->socket, msg, MAX_PACKAGE_SIZE, 0);
+
+#ifdef DEBUG_NETWORK
 		printf((std::string("bytesReceived: ") + std::to_string(bytesReceived) + "\n").c_str());
-		
+#endif // DEBUG_NETWORK		
 		switch (bytesReceived)
 		{
 		case 0:
+#ifdef DEBUG_NETWORK
 			printf("Client Disconnected\n");
+#else
+		case SOCKET_ERROR :
+#endif // DEBUG_NETWORK
 			connectionIsClosed = true;
+			nEvent.eventType = NETWORK_EVENT_TYPE::CLIENT_DISCONNECTED;
+			addNetworkEvent(nEvent, 0);
 			break;
+#ifdef DEBUG_NETWORK
 		case SOCKET_ERROR:
 			printf("Error Receiving: Disconnecting client.\n");
 			connectionIsClosed = true;
+			nEvent.eventType = NETWORK_EVENT_TYPE::CLIENT_DISCONNECTED;
+			addNetworkEvent(nEvent, 0);
 			break;
+#endif // DEBUG_NETWORK
 		default:
-		{
-			std::lock_guard<std::mutex> lock(m_mutex_packages);
-			m_awaitingPackages[m_pend].senderId = conn->id;
-			memcpy(m_awaitingPackages[m_pend].msg, msg, bytesReceived);
-			m_pend = (m_pend + 1) % MAX_AWAITING_PACKAGES;
-			if (m_pend == m_pstart)
-				m_pstart++;
-		}
+		
+			nEvent.data = reinterpret_cast<MessageData*>(msg);
+			nEvent.eventType = NETWORK_EVENT_TYPE::MSG_RECEIVED;
+
+			addNetworkEvent(nEvent, bytesReceived);
+		
 			break;
 		}
 	}
-}
-
-void Network::Pinger()
-{
-	//while (true)
-	//{
-	//	std::this_thread::sleep_for(std::chrono::seconds(1));
-	//	
-	//	for (auto conn : m_connections)
-	//	{
-	//		if (conn.second->isConnected) {
-	//			std::string s = "Ping " + std::to_string(conn.second->lastPingID);
-	//			Send(s.c_str(), s.length + 1, conn.second);
-	//		}
-	//	}
-
-	//}
 }

@@ -24,5 +24,5 @@ The solution includes three projects:
 - Host-Demo
 - Network-Module
 
-See the Demo projects how to set up Host and Client Application.
+See the Demo projects show to setup Host and Client Application.
 The demo projects is only there to test/showcase the Network-Module and is not needed for the module to be used.

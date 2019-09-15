@@ -9,9 +9,12 @@
 
 #define MAX_PACKAGE_SIZE 64
 #define MAX_AWAITING_PACKAGES 1000
+#define HOST_META_DESC_SIZE MAX_PACKAGE_SIZE - 6
+
 //#define DEBUG_NETWORK
 
 typedef unsigned long long TCP_CONNECTION_ID;
+//#pragma pack( show )
 
 struct Connection
 {	
@@ -32,9 +35,9 @@ struct Connection
 
 enum class NETWORK_EVENT_TYPE {
 	NETWORK_ERROR,
-	CLIENT_JOINED,
-	CLIENT_DISCONNECTED,
-	CLIENT_RECONNECTED,
+	CONNECTION_ESTABLISHED,
+	CONNECTION_CLOSED,
+	CONNECTION_RE_ESTABLISHED,
 	MSG_RECEIVED,
 	HOST_ON_LAN_FOUND,
 };
@@ -43,8 +46,12 @@ union NetworkEventData {
 	char rawMsg[MAX_PACKAGE_SIZE];
 	struct
 	{
+		union {
+			ULONG ip_full;
+			char ip_part[4];
+		};
 		USHORT hostPort;
-		char hostIP[MAX_PACKAGE_SIZE-2];
+		char description[HOST_META_DESC_SIZE];
 	} HostFoundOnLanData;
 };
 
@@ -95,11 +102,51 @@ public:
 		Return true if message could be sent to all receivers.
 	*/
 	bool send(const char* message, size_t size, TCP_CONNECTION_ID receiverID = 0);
-	bool send(const char* message, size_t size, Connection* conn);
 	
-	bool searchHostsOnLan();
+	/*
+		Set server meta description.
+		This meta data is optional and sent to the clients on lan when a client calls searchHostsOnLan().
+		The meta data can then be retreived from the HOST_ON_LAN_FOUND network event(s) if any hosts exists on the lan with the host flag ENABLE_LAN_SEARCH_VISIBILITY.
 
+		This data is broadcasted with UDP and can be used to give clients information before connection to the host.
+		This can be data like server name, number of active connections etc.
+
+		It is up to the programmer to encode and decode any message they want to pass as metadata.
+
+		The server meta data is not guaranteed to arrive to the clients since this is sent with UDP.
+
+		The server meta description can not be greater than 58 Bytes long.
+	*/
+	void setServerMetaDescription(char* desc, int descSize);
+	/*
+		This function will broadcast a UDP message on the LAN requesting all hosts(if any) to identify themself.
+		The NetworkEvent HOST_ON_LAN_FOUND will trigger for each host on the network that responded.
+
+		Only hosts initialized with the ENABLE_LAN_SEARCH_VISIBILITY flag will respond to this message.
+	*/
+	bool searchHostsOnLan();
 	void shutdown();
+
+	/*
+		Expands a compressed ipv4 address into a readable char array in dotted-decimal notation.
+		For example the compressed address ip = ULONG_MAX will be expanded into "255.255.255.255"
+
+		@param ip, the compressed ipv4 address that should be expanded into a readable char array.
+		@param buffer, a pointer to a char array to place the expanded ip address.
+		@param buffersize, the max size of the buffer.
+	*/
+	static void ip_int_to_ip_string(ULONG ip, char* buffer, int buffersize);
+	/*
+		Compresses a ipv4 address from dotted-decimal notation to a single ULONG.
+		Example1 the ip = "255.255.255.255" will be returned as ULONG_MAX
+		Example2 the ip = "0.0.0.255" will be returned as 255
+
+		@param ip, a char pointer to a ipv4 address. Exemple "192.168.1.10"
+		@param buffersize, max size of the buffer passed in the ip parameter
+
+		@return, the ip address compressed into a single int value.
+	*/
+	static ULONG ip_string_to_ip_int(char* ip, int buffersize);
 
 private:
 
@@ -107,6 +154,13 @@ private:
 	{
 		UDP_DATA_PACKAGE_TYPE_HOSTINFO = 1,
 		UDP_DATA_PACKAGE_TYPE_HOSTINFO_REQUEST = 2,
+	};
+
+	enum INITIALIZED_STATUS : char {
+		NOT_INITIALIZED = 0,
+		INITIALIZED = 1,
+		IS_CLIENT = 2,
+		IS_SERVER = 4,
 	};
 
 	struct UDP_DATA
@@ -121,7 +175,8 @@ private:
 					struct
 					{
 						USHORT port;
-						char description[MAX_PACKAGE_SIZE - 4];
+						char hostdescription[HOST_META_DESC_SIZE];
+						char padding[2];
 					} hostdata;
 				} packageData;
 			} package;
@@ -129,7 +184,8 @@ private:
 	};
 
 	bool m_shutdown = false;
-	
+	char m_serverMetaDesc[HOST_META_DESC_SIZE];
+
 	//TCP CONNECTION
 	SOCKET m_soc = 0;
 	sockaddr_in m_myAddr = {0};
@@ -147,8 +203,8 @@ private:
 	std::thread* m_UDPListener = nullptr;
 
 	//GENERIC
-	bool m_isServer = false;
-	bool m_isInitialized = false;
+	INITIALIZED_STATUS m_initializedStatus = INITIALIZED_STATUS::NOT_INITIALIZED;
+
 	USHORT m_hostFlags;
 	TCP_CONNECTION_ID m_nextID = 0; //Only used if m_useRandomIDs == false
 	TCP_CONNECTION_ID m_myClientID = 0; //Used by clients only
@@ -168,6 +224,7 @@ private:
 	bool udpSend(sockaddr* addr, char* msg, int msgSize);
 
 	TCP_CONNECTION_ID generateID();
+	bool send(const char* message, size_t size, Connection* conn);
 	void addNetworkEvent(NetworkEvent n, int dataSize);
 
 	/*

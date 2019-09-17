@@ -1,4 +1,4 @@
-#include "pch.h"
+//#include "pch.h"
 #include "NetworkModule.hpp"
 
 Network::Network() {}
@@ -11,23 +11,31 @@ Network::~Network() {
 
 void Network::checkForPackages(NetworkEventHandler& handler)
 {
-
 	bool morePackages = true;
 	while (morePackages)
 	{
 		std::lock_guard<std::mutex> lock(m_mutex_packages);
-
 		if (m_pstart == m_pend) {
 			morePackages = false;
 			break;
 		}
-
 		handler.handleNetworkEvents(m_awaitingEvents[m_pstart]);
-
-
 		m_pstart = (m_pstart + 1) % MAX_AWAITING_PACKAGES;
 	}
+}
 
+void Network::checkForPackages(void (*m_callbackfunction)(NetworkEvent)) {
+	bool morePackages = true;
+	while (morePackages)
+	{
+		std::lock_guard<std::mutex> lock(m_mutex_packages);
+		if (m_pstart == m_pend) {
+			morePackages = false;
+			break;
+		}
+		m_callbackfunction(m_awaitingEvents[m_pstart]);
+		m_pstart = (m_pstart + 1) % MAX_AWAITING_PACKAGES;
+	}
 }
 
 bool Network::setupHost(unsigned short port)

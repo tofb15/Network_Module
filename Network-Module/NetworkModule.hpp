@@ -54,6 +54,8 @@ union NetworkEventData {
 		char description[HOST_META_DESC_SIZE];
 	} HostFoundOnLanData;
 };
+static_assert(sizeof(NetworkEventData) == MAX_PACKAGE_SIZE, "sizeof(NetworkEventData) is not what you expect! Check your struct man.");
+
 
 struct NetworkEvent {
 	NETWORK_EVENT_TYPE eventType;
@@ -182,6 +184,7 @@ private:
 			} package;
 		};
 	};
+	static_assert(sizeof(UDP_DATA) == MAX_PACKAGE_SIZE, "sizeof(UDP_DATA) is not what you expect! Check your struct man.");
 
 	bool m_shutdown = false;
 	char m_serverMetaDesc[HOST_META_DESC_SIZE];

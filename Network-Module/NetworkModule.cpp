@@ -1,14 +1,11 @@
+//#include "pch.h"
 #include "NetworkModule.hpp"
-//
-//static BOOL bOptVal = TRUE;
-//static int bOptLen = sizeof(bool);
 
 Network::Network() {}
 
 Network::~Network() {
-	if (!m_shutdown) {
-		shutdown();
-	}
+	shutdown();
+	
 
 	delete[] m_awaitingEvents;
 	delete[] m_awaitingMessages;
@@ -19,7 +16,7 @@ Network::~Network() {
 bool Network::initialize()
 {
 	if (m_initializedStatus) {
-		return false;
+		return true;
 	}
 
 	WSADATA data;
@@ -41,24 +38,33 @@ bool Network::initialize()
 	return true;
 }
 
-void Network::checkForPackages(void(*m_callbackfunction)(NetworkEvent))
+void Network::checkForPackages(NetworkEventHandler& handler)
 {
-
 	bool morePackages = true;
 	while (morePackages)
 	{
 		std::lock_guard<std::mutex> lock(m_mutex_packages);
-
 		if (m_pstart == m_pend) {
 			morePackages = false;
 			break;
 		}
-
-		m_callbackfunction(m_awaitingEvents[m_pstart]);
-
+		handler.handleNetworkEvents(m_awaitingEvents[m_pstart]);
 		m_pstart = (m_pstart + 1) % MAX_AWAITING_PACKAGES;
 	}
+}
 
+void Network::checkForPackages(void (*m_callbackfunction)(NetworkEvent)) {
+	bool morePackages = true;
+	while (morePackages)
+	{
+		std::lock_guard<std::mutex> lock(m_mutex_packages);
+		if (m_pstart == m_pend) {
+			morePackages = false;
+			break;
+		}
+		m_callbackfunction(m_awaitingEvents[m_pstart]);
+		m_pstart = (m_pstart + 1) % MAX_AWAITING_PACKAGES;
+	}
 }
 
 bool Network::host(unsigned short port, USHORT hostFlags)
@@ -74,6 +80,7 @@ bool Network::host(unsigned short port, USHORT hostFlags)
 
 	m_hostFlags = hostFlags;
 	m_hostPort = port;
+
 	m_soc = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); //IPPROTO_TCP
 	if (m_soc == INVALID_SOCKET) {
 #ifdef DEBUG_NETWORK
@@ -97,9 +104,9 @@ bool Network::host(unsigned short port, USHORT hostFlags)
 	int iOptVal = 0;
 	int iOptLen = sizeof(int);
 
-	setsockopt(m_soc, IPPROTO_TCP, TCP_NODELAY, (char*)&bOptVal, bOptLen);//Prepare the socket to listen
-	setsockopt(m_soc, IPPROTO_TCP, SO_SNDBUF, (char*)&iOptVal, iOptLen);//Prepare the socket to listen
-	
+	setsockopt(m_soc, IPPROTO_TCP, TCP_NODELAY, (char*)& bOptVal, bOptLen);//Prepare the socket to listen
+	setsockopt(m_soc, IPPROTO_TCP, SO_SNDBUF, (char*)& iOptVal, iOptLen);//Prepare the socket to listen
+
 	::listen(m_soc, SOMAXCONN);
 
 	m_shutdown = false;
@@ -131,7 +138,6 @@ bool Network::join(const char* IP_adress, unsigned short hostport)
 		return false;
 	}
 
-	//m_myAddr.sin_addr.S_un.S_addr = ADDR_ANY;
 	m_myAddr.sin_family = AF_INET;
 	m_myAddr.sin_port = htons(hostport);
 	inet_pton(AF_INET, IP_adress, &m_myAddr.sin_addr);
@@ -184,17 +190,16 @@ bool Network::send(const char* message, size_t size, TCP_CONNECTION_ID receiverI
 			if(send(message, size, conn))
 				success++;
 		}
-
 		return true;
-	}	
+	}
 
-	char msg[MAX_PACKAGE_SIZE] = {0};
+	char msg[MAX_PACKAGE_SIZE] = { 0 };
 	memcpy(msg, message, size);
 
 	Connection* conn = nullptr;
 	{
 		std::lock_guard<std::mutex> mu(m_mutex_connections);
-		if (receiverID > m_connections.size()) {
+		if (!m_connections.count(receiverID)){
 			return false;
 		}
 
@@ -428,6 +433,14 @@ TCP_CONNECTION_ID Network::generateID()
 	return id;
 }
 
+bool Network::isServer() {
+	return m_initializedStatus == INITIALIZED_STATUS::IS_SERVER;
+}
+
+bool Network::isInitialized() {
+	return m_initializedStatus;
+}
+
 void Network::shutdown()
 {
 	if (!m_initializedStatus) {
@@ -500,7 +513,6 @@ ULONG Network::ip_string_to_ip_int(char* ip, int buffersize)
 void Network::addNetworkEvent(NetworkEvent n, int dataSize)
 {
 	std::lock_guard<std::mutex> lock(m_mutex_packages);
-	
 	memcpy(m_awaitingMessages[m_pend].rawMsg, n.data->rawMsg, dataSize);
 	m_awaitingEvents[m_pend].eventType = n.eventType;
 	m_awaitingEvents[m_pend].clientID = n.clientID;
@@ -587,12 +599,11 @@ void Network::listen(const Connection* conn)
 			break;
 #endif // DEBUG_NETWORK
 		default:
-		
 			nEvent.data = reinterpret_cast<NetworkEventData*>(msg);
 			nEvent.eventType = NETWORK_EVENT_TYPE::MSG_RECEIVED;
 
 			addNetworkEvent(nEvent, bytesReceived);
-		
+
 			break;
 		}
 	}

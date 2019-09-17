@@ -1,24 +1,18 @@
 #pragma once
 #include <WS2tcpip.h>
-#pragma comment (lib, "ws2_32.lib")
 #include <vector>
 #include <unordered_map>
 #include <string>
 #include <thread>
 #include <mutex>
 
-#define MAX_PACKAGE_SIZE 64
-#define MAX_AWAITING_PACKAGES 1000
-#define HOST_META_DESC_SIZE MAX_PACKAGE_SIZE - 6
-
-//#define DEBUG_NETWORK
-
-typedef unsigned long long TCP_CONNECTION_ID;
-//#pragma pack( show )
+#include "NetworkStructs.hpp"
+#pragma comment (lib, "ws2_32.lib")
 
 struct Connection
-{	
-	std::string ip, port;
+{
+	std::string ip;
+	std::string port;
 	TCP_CONNECTION_ID id;
 	bool isConnected;
 	SOCKET socket;
@@ -30,42 +24,6 @@ struct Connection
 		socket = NULL;
 		ip = port = "";
 		thread = nullptr;
-	}
-};
-
-enum class NETWORK_EVENT_TYPE {
-	NETWORK_ERROR,
-	CONNECTION_ESTABLISHED,
-	CONNECTION_CLOSED,
-	CONNECTION_RE_ESTABLISHED,
-	MSG_RECEIVED,
-	HOST_ON_LAN_FOUND,
-};
-
-union NetworkEventData {
-	char rawMsg[MAX_PACKAGE_SIZE];
-	struct
-	{
-		union {
-			ULONG ip_full;
-			char ip_part[4];
-		};
-		USHORT hostPort;
-		char description[HOST_META_DESC_SIZE];
-	} HostFoundOnLanData;
-};
-static_assert(sizeof(NetworkEventData) == MAX_PACKAGE_SIZE, "sizeof(NetworkEventData) is not what you expect! Check your struct man.");
-
-
-struct NetworkEvent {
-	NETWORK_EVENT_TYPE eventType;
-	TCP_CONNECTION_ID clientID;
-	NetworkEventData* data;
-
-	NetworkEvent() {
-		eventType = NETWORK_EVENT_TYPE::NETWORK_ERROR;
-		clientID = 0;
-		data = nullptr;
 	}
 };
 
@@ -86,8 +44,9 @@ public:
 	~Network();
 
 	bool initialize();
-
+	void checkForPackages(NetworkEventHandler& handler);
 	void checkForPackages(void (*m_callbackfunction)(NetworkEvent));
+
 	/*
 		Call host() to a host session. Dont call this and join() in the same application.
 	*/
@@ -103,8 +62,7 @@ public:
 
 		Return true if message could be sent to all receivers.
 	*/
-	bool send(const char* message, size_t size, TCP_CONNECTION_ID receiverID = 0);
-	
+	bool send(const char* message, size_t size, TCP_CONNECTION_ID receiverID = 0);	
 	/*
 		Set server meta description.
 		This meta data is optional and sent to the clients on lan when a client calls searchHostsOnLan().
@@ -127,8 +85,13 @@ public:
 		Only hosts initialized with the ENABLE_LAN_SEARCH_VISIBILITY flag will respond to this message.
 	*/
 	bool searchHostsOnLan();
-	void shutdown();
 
+	/*
+		Returns true if this is a Host.
+	*/
+	bool isServer();
+	bool isInitialized();
+	void shutdown();
 	/*
 		Expands a compressed ipv4 address into a readable char array in dotted-decimal notation.
 		For example the compressed address ip = ULONG_MAX will be expanded into "255.255.255.255"
@@ -219,9 +182,10 @@ private:
 	NetworkEventData* m_awaitingMessages;
 	NetworkEvent* m_awaitingEvents;
 
-	int m_pstart = 0, m_pend = 0;
+	int m_pstart = 0;
+	int m_pend = 0;
 	std::mutex m_mutex_packages;
-	
+
 	bool startUDPSocket(unsigned short port);
 	void listenForUDP();
 	bool udpSend(sockaddr* addr, char* msg, int msgSize);
@@ -232,7 +196,7 @@ private:
 
 	/*
 		Only used by the server. This function is called in a new thread and waits for new incomming connection requests.
-		Accepted connections are stored in m_connections. A new thread is created for each connection directly Listen() in order to listen for incomming messages from that connection;
+		Accepted connections are stored in m_connections. A new thread is created for each connection directly Listen() in order to listen for incomming messages from that connection.
 	*/
 	void waitForNewConnections();
 
@@ -243,6 +207,6 @@ private:
 
 		Host connection requests is handled in WaitForNewConnections()
 	*/
-
 	void listen(const Connection* conn);//Rename this function
 };
+

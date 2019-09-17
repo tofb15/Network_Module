@@ -23,5 +23,8 @@
     <ClInclude Include="NetworkModule.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="NetworkStructs.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
